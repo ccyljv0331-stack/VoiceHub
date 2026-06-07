@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5DV4vGlqn82YaNi7a3xW4zjmS8ZUr6cz&jump_from=webapi&authKey=axAl02PMsIVVAwrXij0YUUrOrUTeLpqLipu5XcTvyBUOzeWaOnicBB+fmBwNJs5S) | [使用学校收集表](https://laoshuikaixue.feishu.cn/share/base/form/shrcniUKakpNYP6KH7qrU20qq5e) | [项目宣传片](https://www.bilibili.com/video/BV1B9ArzMEkA) | [赞助支持](/#sponsor)
+[交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5DV4vGlqn82YaNi7a3xW4zjmS8ZUr6cz&jump_from=webapi&authKey=axAl02PMsIVVAwrXij0YUUrOrUTeLpqLipu5XcTvyBUOzeWaOnicBB+fmBwNJs5S) | [使用学校收集表](https://laoshuikaixue.feishu.cn/share/base/form/shrcniUKakpNYP6KH7qrU20qq5e) | [项目宣传片](https://www.bilibili.com/video/BV1B9ArzMEkA) | [赞助支持](#sponsor)
 
 </div>
 
@@ -816,7 +816,7 @@ VoiceHub/
 │   │   │       │   └── status.put.ts    # 更新用户状态
 │   │   │       ├── [id].delete.ts   # 删除用户
 │   │   │       ├── [id].put.ts      # 更新用户
-│   │   │       ├── [id].ts          # 用户详情
+│   │   │       ├── [id].get.ts      # 用户详情
 │   │   │       ├── batch-grade-update.post.ts # 批量年级更新
 │   │   │       ├── batch-status.put.ts # 批量状态更新
 │   │   │       ├── batch-update.post.ts # 批量更新用户
@@ -866,6 +866,7 @@ VoiceHub/
 │   │   │   ├── bind.post.ts         # 绑定MeoW账号
 │   │   │   └── unbind.post.ts       # 解绑MeoW账号
 │   │   ├── music/          # 音乐相关API
+│   │   │   ├── resolve-url.post.ts # 音乐播放链接统一解析
 │   │   │   ├── state.post.ts        # 音乐状态管理
 │   │   │   └── websocket.ts         # 音乐WebSocket连接
 │   │   ├── native-api/     # 原生音乐API
@@ -1841,8 +1842,10 @@ Thanks goes to these wonderful people:
 - [Sound-of-experiment - 实验之声广播站点歌系统](https://github.com/ljk743121/Sound-of-experiment) (哔哩哔哩音源搜索功能参考)
 - [Bilibili-audio-extraction](https://github.com/rio4raki/Bilibili-audio-extraction) (哔哩哔哩音频流获取参考)
 - [SPlayer](https://github.com/imsyy/SPlayer)
+- [Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics)
 - [official-website - Sparkinit](https://github.com/Sparkinit/official-website)
 - [MusicAPI-rrvenn](https://music.rrvenn.cn)
+- [qq-music-api](https://github.com/sansenjian/qq-music-api) (QQ音乐歌词获取参考)
 
 ## 许可证
 
