@@ -7,15 +7,19 @@ import {
   cardCodes,
   songCollaborators,
   songs,
-  systemSettings,
   users
 } from '~/drizzle/db'
 import { and, eq, gt, inArray, lt, lte, sql } from 'drizzle-orm'
 import { createError } from 'h3'
+import { createApiError } from '~~/server/utils/apiError'
 import { createCollaborationInvitationNotification } from '~~/server/services/notificationService'
-import { isLimitReached } from '~~/server/utils/submissionLimit'
+import {
+  isCardCodeLimitBypassActive,
+  isLimitReached
+} from '~~/server/utils/submissionLimit'
 import { getClientIP } from '~~/server/utils/ip-utils'
 import { getBeijingTimeISOString } from '~/utils/timeUtils'
+import { getSystemSettingsCached } from '~~/server/utils/system-settings-helper'
 import { z } from 'zod'
 
 type SongRequestUser = {
@@ -34,8 +38,11 @@ const songRequestBodySchema = z.object({
   playUrl: z.string().trim().max(2000, '播放链接不能超过2000个字符').optional().nullable(),
   submissionNote: z.string().trim().max(300, '备注留言不能超过300个字符').optional().nullable(),
   submissionNotePublic: z.boolean().optional(),
-  preferredPlayTimeId: z.string().uuid('播出时段 ID 无效').optional().nullable(),
-  cardCode: z.string().trim().max(100, '点歌券不能超过100个字符').optional().nullable(),
+  preferredPlayTimeId: z.preprocess(
+    (value) => value === null || value === undefined || value === '' ? null : Number(value),
+    z.number().int().positive('播出时段 ID 无效').nullable()
+  ).optional(),
+  cardCode: z.string().trim().max(100, 'CARD_CODE_TOO_LONG').optional().nullable(),
   collaborators: z.array(z.union([z.string(), z.number()])).max(20, '联合投稿人不能超过20个').optional()
 })
 
@@ -43,6 +50,11 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
   const parsedBody = songRequestBodySchema.safeParse(body || {})
   if (!parsedBody.success) {
     const issues = parsedBody.error.issues || []
+    const cardCodeIssue = issues.find((issue) => String(issue.message).startsWith('CARD_CODE_'))
+    if (cardCodeIssue) {
+      throw createApiError(400, cardCodeIssue.message, 'Invalid request card')
+    }
+
     throw createError({
       statusCode: 400,
       message: issues.length
@@ -68,6 +80,9 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
     const normalizedArtist = normalizeForMatch(requestBody.artist)
 
     const currentSemester = await getCurrentSemesterName()
+
+    const systemSettingsData = await getSystemSettingsCached()
+    const isAdmin = user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
 
     const isBilibili =
       requestBody.musicPlatform === 'bilibili' ||
@@ -102,14 +117,10 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
         )
 
       if (existingSongs.length > 0) {
-        const isSuperAdmin = user.role === 'SUPER_ADMIN'
-        const hasUnplayedDuplicate = existingSongs.some((s) => !s.played)
-        if (!isSuperAdmin || hasUnplayedDuplicate) {
-          throw createError({
-            statusCode: 400,
-            message: `《${requestBody.title}》已经在列表中，不能重复投稿`
-          })
-        }
+        throw createError({
+          statusCode: 400,
+          message: `《${requestBody.title}》已经在列表中，不能重复投稿`
+        })
       }
     } else {
       const allSongs = await db
@@ -130,21 +141,12 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
       })
 
       if (matchingSongs.length > 0) {
-        const isSuperAdmin = user.role === 'SUPER_ADMIN'
-        const hasUnplayedDuplicate = matchingSongs.some((s) => !s.played)
-        if (!isSuperAdmin || hasUnplayedDuplicate) {
-          throw createError({
-            statusCode: 400,
-            message: `《${requestBody.title}》已经在列表中，不能重复投稿`
-          })
-        }
+        throw createError({
+          statusCode: 400,
+          message: `《${requestBody.title}》已经在列表中，不能重复投稿`
+        })
       }
     }
-
-    const systemSettingsResult = await db.select().from(systemSettings).limit(1)
-    const systemSettingsData = systemSettingsResult[0]
-    const isAdmin = user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
-
     if (systemSettingsData?.forceBlockAllRequests && !isAdmin) {
       throw createError({
         statusCode: 403,
@@ -215,15 +217,20 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
     if (systemSettingsData?.requireCardCodeForRequests && !isAdmin) {
       const providedCardCode = requestBody.cardCode ? requestBody.cardCode.trim().toUpperCase() : ''
       if (!providedCardCode) {
-        throw createError({ statusCode: 403, message: '本站点已启用仅点歌券投稿，请提供有效点歌券' })
+        throw createApiError(
+          403,
+          'CARD_CODE_REQUIRED_FOR_SITE',
+          'This site requires a valid request card to submit songs'
+        )
       }
     }
 
     const isCardCodeEnabled = !!(
       systemSettingsData?.enableCardCodeRequests || systemSettingsData?.requireCardCodeForRequests
     )
+    const excludeCardCodeRequestsFromLimit = isCardCodeLimitBypassActive(systemSettingsData)
     if (requestBody.cardCode && requestBody.cardCode.trim() && !isCardCodeEnabled && !isAdmin) {
-      throw createError({ statusCode: 400, message: '点歌券投稿功能未启用' })
+      throw createApiError(400, 'CARD_CODE_DISABLED', 'Request card submissions are not enabled')
     }
 
     let preferredPlayTime = null
@@ -271,7 +278,11 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
 
         const found = codeRows[0]
         if (!found || found.status !== 'AVAILABLE') {
-          throw createError({ statusCode: 400, message: '点歌券无效或已被使用' })
+          throw createApiError(
+            400,
+            'CARD_CODE_INVALID_OR_USED',
+            'Request card is invalid or already used'
+          )
         }
 
         const lockResult = await tx
@@ -281,7 +292,11 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
           .returning()
 
         if (lockResult.length === 0) {
-          throw createError({ statusCode: 400, message: '点歌券已被锁定或不可用' })
+          throw createApiError(
+            400,
+            'CARD_CODE_LOCKED_OR_UNAVAILABLE',
+            'Request card is locked or unavailable'
+          )
         }
 
         providedCardCodeId = found.id
@@ -290,11 +305,23 @@ export async function requestSongForUser(event: any, user: SongRequestUser, body
       if (
         systemSettingsData?.enableSubmissionLimit &&
         !isAdmin &&
+        !(excludeCardCodeRequestsFromLimit && providedCardCodeId) &&
         effectiveLimit &&
         effectiveLimit > 0 &&
         limitType
       ) {
-        if (await isLimitReached(tx as any, user.id, limitType, effectiveLimit)) {
+        // 同一用户的限额检查必须串行，否则并发请求可能读取到相同计数并同时越过上限。
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, user.id))
+          .for('update')
+
+        if (
+          await isLimitReached(tx as any, user.id, limitType, effectiveLimit, {
+            excludeCardCodeRequests: excludeCardCodeRequestsFromLimit
+          })
+        ) {
           const labelMap: Record<string, string> = { daily: '每日', weekly: '每周', monthly: '每月' }
           const timeMap: Record<string, string> = { daily: '今日', weekly: '本周', monthly: '本月' }
 
