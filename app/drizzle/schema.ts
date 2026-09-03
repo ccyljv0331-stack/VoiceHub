@@ -2,8 +2,8 @@ import {bigint, boolean, index, integer, pgEnum, pgTable, serial, text, timestam
 import {relations, sql} from 'drizzle-orm';
 
 // 枚举定义
-export const blacklistTypeEnum = pgEnum('BlacklistType', ['SONG', 'KEYWORD']);
-export const userStatusEnum = pgEnum('user_status', ['active', 'withdrawn', 'graduate']);
+export const blacklistTypeEnum = pgEnum('BlacklistType', ['SONG', 'KEYWORD', 'LANGUAGE', 'GENRE']);
+export const userStatusEnum = pgEnum('user_status', ['active', 'pending', 'withdrawn', 'graduate', 'rejected']);
 export const collaboratorStatusEnum = pgEnum('collaborator_status', ['PENDING', 'ACCEPTED', 'REJECTED']);
 export const replayRequestStatusEnum = pgEnum('replay_request_status', ['PENDING', 'FULFILLED', 'REJECTED']);
 export const cardCodeStatusEnum = pgEnum('card_code_status', [
@@ -33,10 +33,37 @@ export const users = pgTable('User', {
   tokenVersion: integer('tokenVersion').default(0).notNull(),
   meowNickname: text('meowNickname'),
   meowBoundAt: timestamp('meowBoundAt'),
+  avatarProvider: text('avatarProvider'),
+  avatarProviderUserId: text('avatarProviderUserId'),
   status: userStatusEnum('status').default('active').notNull(),
   statusChangedAt: timestamp('statusChangedAt').defaultNow(),
   statusChangedBy: integer('statusChangedBy'),
-});
+  // 注册时可选填写的备注，管理员审核时可修改
+  remark: text('remark'),
+}, (table) => [uniqueIndex('User_username_unique').on(table.username)]);
+
+// 登录会话表，id 与 JWT 的 jti 一致
+export const authSessions = pgTable('auth_sessions', {
+  id: uuid('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastActiveAt: timestamp('last_active_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  browser: text('browser'),
+  operatingSystem: text('operating_system'),
+  device: text('device'),
+  loginMethod: text('login_method').default('password').notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revokedReason: text('revoked_reason')
+}, (table) => [
+  index('auth_sessions_user_active_idx').on(table.userId, table.revokedAt, table.expiresAt),
+  index('auth_sessions_last_active_idx').on(table.lastActiveAt)
+]);
+
+export type AuthSession = typeof authSessions.$inferSelect;
+export type NewAuthSession = typeof authSessions.$inferInsert;
 
 // 播出时段表
 export const playTimes = pgTable('PlayTime', {
@@ -49,6 +76,19 @@ export const playTimes = pgTable('PlayTime', {
   enabled: boolean('enabled').default(true).notNull(),
   description: text('description'),
 });
+
+// 年级班级配置表（选择器选项来源，优先于从用户提取）
+export const gradeClass = pgTable(
+  'GradeClass',
+  {
+    id: serial('id').primaryKey(),
+    createdAt: timestamp('createdAt').defaultNow().notNull(),
+    updatedAt: timestamp('updatedAt').defaultNow().notNull(),
+    grade: text('grade').notNull(),
+    class: text('class').notNull(),
+  },
+  (table) => [unique('GradeClass_grade_class_unique').on(table.grade, table.class)],
+);
 
 // 歌曲表
 export const songs = pgTable('Song', {
@@ -69,6 +109,8 @@ export const songs = pgTable('Song', {
   durationSeconds: integer('durationSeconds'),
   submissionNote: text('submissionNote'),
   submissionNotePublic: boolean('submissionNotePublic').default(false).notNull(),
+  // 公开留言审核状态：'pending' | 'approved' | 'rejected' | null（null 表示未启用审核或不涉及）
+  submissionNotePublicStatus: text('submissionNotePublicStatus'),
   hitRequestId: integer(),
   cardCodeId: integer('cardCodeId').references(() => cardCodes.id, { onDelete: 'set null' }),
 }, (table) => [
@@ -193,6 +235,11 @@ export const systemSettings = pgTable('SystemSettings', {
   dailySubmissionLimit: integer('dailySubmissionLimit'),
   weeklySubmissionLimit: integer('weeklySubmissionLimit'),
   monthlySubmissionLimit: integer('monthlySubmissionLimit'),
+  // 用户可见播出排期范围
+  scheduleDaysBeforeEnabled: boolean('scheduleDaysBeforeEnabled').default(false).notNull(),
+  scheduleDaysBefore: integer('scheduleDaysBefore').default(1).notNull(),
+  scheduleDaysAfterEnabled: boolean('scheduleDaysAfterEnabled').default(false).notNull(),
+  scheduleDaysAfter: integer('scheduleDaysAfter').default(1).notNull(),
   showBlacklistKeywords: boolean('showBlacklistKeywords').default(false).notNull(),
   hideStudentInfo: boolean('hideStudentInfo').default(true).notNull(),
   // SMTP 邮件配置
@@ -225,6 +272,17 @@ export const systemSettings = pgTable('SystemSettings', {
   turnstileSiteKey: text('turnstileSiteKey'),
   turnstileSecretKey: text('turnstileSecretKey'),
   
+  // 注册配置
+  allowRegister: boolean('allowRegister').default(false).notNull(),
+  registerRequiresApproval: boolean('registerRequiresApproval').default(true).notNull(),
+  oauthRegisterRequiresApproval: boolean('oauthRegisterRequiresApproval').default(true).notNull(),
+  // 注册邮箱（选填→管理员开关控制；需 SMTP 已配置）
+  registerEmailRequired: boolean('registerEmailRequired').default(false).notNull(),
+  // 注册时必须选择年级班级（本地注册与第三方创建账户均强制）
+  registerRequiresGradeClass: boolean('registerRequiresGradeClass').default(false).notNull(),
+  // 投稿公开留言审核
+  submissionNoteRequiresApproval: boolean('submissionNoteRequiresApproval').default(false).notNull(),
+
   // OAuth 配置
   allowOAuthRegistration: boolean('allowOAuthRegistration').default(false).notNull(),
   oauthRedirectUri: text('oauthRedirectUri'),
@@ -249,7 +307,7 @@ export const systemSettings = pgTable('SystemSettings', {
   aggregateOAuthAppId: text('aggregateOAuthAppId'),
   aggregateOAuthAppKey: text('aggregateOAuthAppKey'),
   aggregateOAuthLoginType: text('aggregateOAuthLoginType').default('qq'),
-  aggregateOAuthEndpoint: text('aggregateOAuthEndpoint').default('https://a.idcfx.net/connect.php'),
+  aggregateOAuthEndpoint: text('aggregateOAuthEndpoint'),
   // Custom OAuth2
   customOAuthEnabled: boolean('customOAuthEnabled').default(false).notNull(),
   customOAuthDisplayName: text('customOAuthDisplayName'),
@@ -272,6 +330,13 @@ export const systemSettings = pgTable('SystemSettings', {
   autoBackupEnabled: boolean('autoBackupEnabled').default(false).notNull(),
   autoBackupConfig: text('autoBackupConfig'),
 
+  // 站点统计代码（任意站点统计平台的 HTML/JS 片段，注入 SSR 页面 <head>）
+  statisticsCodeEnabled: boolean('statisticsCodeEnabled').default(false).notNull(),
+  statisticsCode: text('statisticsCode'),
+
+  // 主题管理配置
+  defaultTheme: text('defaultTheme').default('System').notNull(),
+  enabledThemes: text('enabledThemes').default('["System","ClassicDark","ClassicLight","ModernLight"]').notNull(),
   // 平台管理配置
   enabledPlatforms: text('enabledPlatforms').default('["netease","tencent","bilibili","migu"]'),
   platformOrder: text('platformOrder').default('["netease","tencent","bilibili","migu"]'),
@@ -334,6 +399,9 @@ export const apiLogs = pgTable('api_logs', {
 export const userStatusLogs = pgTable('user_status_logs', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull(),
+  // 审计快照：用户被删除后仍可追溯（如注册审核拒绝）
+  username: text('username'),
+  name: text('name'),
   oldStatus: userStatusEnum('old_status'),
   newStatus: userStatusEnum('new_status').notNull(),
   reason: text('reason'),
@@ -391,6 +459,7 @@ export const songReplayRequests = pgTable('song_replay_requests', {
   preferredPlayTimeId: integer('preferred_play_time_id'),
   submissionNote: text('submission_note'),
   submissionNotePublic: boolean('submission_note_public').default(false).notNull(),
+  submissionNotePublicStatus: text('submission_note_public_status'),
 }, (table) => [
   // 同一用户对同一首歌同时最多一条待处理申请；历史申请（FULFILLED/REJECTED）允许多条
   uniqueIndex('song_replay_requests_pending_song_user_unique')
@@ -406,6 +475,7 @@ export const userIdentities = pgTable('UserIdentity', {
   provider: text('provider').notNull(),
   providerUserId: text('providerUserId').notNull(),
   providerUsername: text('providerUsername'),
+  avatar: text('avatar'),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
 }, (t) => ({
   unq: unique().on(t.provider, t.providerUserId),
@@ -444,6 +514,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [notificationSettings.userId],
   }),
   apiKeys: many(apiKeys),
+  sessions: many(authSessions),
   statusLogs: many(userStatusLogs),
     collaborations: many(songCollaborators),
   replayRequests: many(songReplayRequests),

@@ -165,7 +165,7 @@
                   @click="activePanel = 'comments'"
                 >
                   <Icon name="message-circle" size="16" />
-                  <span>{{ locale.comments }}</span>
+                  <span>{{ locale.comments }} ({{ formatCompactCommentCount(commentsCount) }})</span>
                 </button>
               </div>
 
@@ -178,12 +178,13 @@
                 </div>
               </div>
 
-              <SongComments
-                v-show="activePanel === 'comments'"
-                class="comments-display-area"
-                :song="currentSong"
-                :visible="isVisible && activePanel === 'comments'"
-              />
+              <div v-show="activePanel === 'comments'" class="comments-display-area">
+                <SongComments
+                  ref="commentsRef"
+                  :song="currentSong"
+                  :visible="isVisible"
+                />
+              </div>
 
               <!-- 歌词设置工具栏 -->
               <div v-if="activePanel === 'lyrics'" class="lyric-toolbar">
@@ -227,6 +228,42 @@
                         <span class="label">{{ locale.showYrc }}</span>
                         <input v-model="lyricSettings.showYrc.value" type="checkbox" />
                       </div>
+                      <template v-if="lyricSettings.useAMLyrics.value">
+                        <div class="setting-divider" />
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllNormalizeSpaces }}</span>
+                          <input
+                            v-model="lyricSettings.amllNormalizeSpaces.value"
+                            type="checkbox"
+                          />
+                        </div>
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllResetLineTimestamps }}</span>
+                          <input
+                            v-model="lyricSettings.amllResetLineTimestamps.value"
+                            type="checkbox"
+                          />
+                        </div>
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllConvertBgLines }}</span>
+                          <input v-model="lyricSettings.amllConvertBgLines.value" type="checkbox" />
+                        </div>
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllSyncBgLines }}</span>
+                          <input v-model="lyricSettings.amllSyncBgLines.value" type="checkbox" />
+                        </div>
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllCleanOverlaps }}</span>
+                          <input v-model="lyricSettings.amllCleanOverlaps.value" type="checkbox" />
+                        </div>
+                        <div class="setting-item switch">
+                          <span class="label">{{ locale.amllTryAdvanceStart }}</span>
+                          <input
+                            v-model="lyricSettings.amllTryAdvanceStart.value"
+                            type="checkbox"
+                          />
+                        </div>
+                      </template>
                     </div>
                   </template>
                 </Popover>
@@ -270,7 +307,7 @@
                   <Icon name="skip-back" size="28" />
                 </button>
                 <button class="play-pause-btn" @click="togglePlayPause">
-                  <AppSpinner v-if="isLoadingTrack" :size="32" />
+                  <AppSpinner v-if="isLoadingTrack" :size="32" color="white" />
                   <Icon v-else :name="isPlaying ? 'pause' : 'play'" size="32" />
                 </button>
                 <button :disabled="!hasNext" class="control-btn" @click="nextSong">
@@ -363,6 +400,16 @@ const hasPushedHistory = ref(false)
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 375)
 const windowHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 812)
 const activePanel = ref('lyrics')
+const commentsRef = ref(null)
+const commentsCount = computed(() => Number(commentsRef.value?.totalCount || 0))
+const commentCountUnit = computed(() => ui.value?.songComments?.tenThousand || '万')
+
+const formatCompactCommentCount = (count) => {
+  const value = Number(count) || 0
+  if (value < 10000) return String(value)
+  const compact = (value / 10000).toFixed(value >= 100000 ? 0 : 1).replace(/\.0$/, '')
+  return `${compact}${commentCountUnit.value}`
+}
 
 // 拖拽状态管理
 const isDragging = ref(false)
@@ -400,8 +447,8 @@ const currentLyricLine = computed(() => {
 
 const canShowComments = computed(() => {
   const song = currentSong.value
-  if (!song || song.musicPlatform !== 'netease') return false
-  return /^\d+$/.test(String(song.musicId || '').trim())
+  if (!song || !['netease', 'tencent'].includes(song.musicPlatform)) return false
+  return /^\d+$/.test(String(song.musicId || '').trim()) || song.musicPlatform === 'tencent'
 })
 
 const currentQualityText = computed(() => {
@@ -994,6 +1041,7 @@ watch(
   () => props.isVisible,
   async (visible) => {
     if (visible) {
+      activePanel.value = 'lyrics'
       disablePageScroll()
 
       await nextTick()
@@ -1554,8 +1602,10 @@ onUnmounted(() => {
 }
 
 .comments-display-area {
+  width: 100%;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .comment-current-lyric {
@@ -1784,13 +1834,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  color: var(--text-primary);
 }
 
 .setting-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: var(--lyrics-modal-text-secondary);
+  color: var(--text-secondary);
   font-size: 0.9rem;
 }
 
@@ -1798,7 +1849,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--lyrics-modal-surface);
+  background: var(--text-primary-10);
   border-radius: 6px;
   padding: 2px;
 }
@@ -1808,7 +1859,7 @@ onUnmounted(() => {
   height: 24px;
   border: none;
   background: transparent;
-  color: white;
+  color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1816,7 +1867,7 @@ onUnmounted(() => {
 }
 
 .setting-item button:hover {
-  background: var(--lyrics-modal-surface);
+  background: var(--text-primary-10);
   border-radius: 4px;
 }
 
@@ -1824,6 +1875,11 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   accent-color: var(--color-error);
+}
+
+.setting-divider {
+  height: 1px;
+  background: var(--overlay-20);
 }
 
 /* 音质菜单动画 */

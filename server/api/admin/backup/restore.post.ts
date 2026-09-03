@@ -8,6 +8,7 @@ import {
   cardCodes,
   collaborationLogs,
   emailTemplates,
+  gradeClass,
   notificationSettings,
   notifications,
   playTimes,
@@ -31,6 +32,10 @@ import { SmtpService } from '../../../services/smtpService'
 import { and, eq, inArray, isNull, notInArray, or } from 'drizzle-orm'
 import { restoreScheduleSongPoolRecord } from '~~/server/utils/restoreScheduleSongPool'
 import { omitMaskedSystemSettingsSecrets } from '~~/server/api/admin/system-settings/secretMask'
+import { validateThemeConfig } from '~~/server/utils/theme-config'
+import { createApiError } from '~~/server/utils/apiError'
+import { SERVER_ERROR_CODES } from '~~/server/config/constants'
+import { normalizeScheduleVisibilitySettings } from '~~/server/utils/system-settings-defaults'
 
 export default defineEventHandler(async (event) => {
   try {
@@ -292,6 +297,7 @@ export default defineEventHandler(async (event) => {
       'playTimes',
       'semesters',
       'requestTimes',
+      'gradeClass',
       'users',
       'userIdentities',
       'emailTemplates',
@@ -365,7 +371,10 @@ export default defineEventHandler(async (event) => {
                             'forcePasswordChange',
                             'meowNickname',
                             'status',
-                            'statusChangedBy'
+                            'statusChangedBy',
+                            'remark',
+                            'avatarProvider',
+                            'avatarProviderUserId'
                           ]
 
                           // 处理日期字段
@@ -591,6 +600,7 @@ export default defineEventHandler(async (event) => {
                           provider: record.provider,
                           providerUserId: record.providerUserId,
                           providerUsername: record.providerUsername,
+                          avatar: record.avatar || null,
                           createdAt: record.createdAt ? new Date(record.createdAt) : new Date()
                         }
 
@@ -661,9 +671,11 @@ export default defineEventHandler(async (event) => {
                           return // 跳过此记录，因为userId是必需的
                         }
 
-                        // 构建用户状态日志数据
+                        // 构建用户状态日志数据（含快照列，删除用户后审计可追溯）
                         const userStatusLogData = {
                           userId: validUserStatusLogUserId,
+                          username: record.username ?? null,
+                          name: record.name ?? null,
                           oldStatus: record.oldStatus || record.previousStatus || null,
                           newStatus: record.newStatus,
                           reason: record.reason || null,
@@ -877,7 +889,8 @@ export default defineEventHandler(async (event) => {
                           'musicId',
                           'durationSeconds',
                           'submissionNote',
-                          'submissionNotePublic'
+                          'submissionNotePublic',
+                          'submissionNotePublicStatus'
                         ]
                         songFields.forEach((field) => {
                           if (record.hasOwnProperty(field)) {
@@ -1121,12 +1134,57 @@ export default defineEventHandler(async (event) => {
                         }
                         break
 
+                      case 'gradeClass':
+                        // 年级班级配置（唯一约束 grade+class）
+                        const gradeClassData = {
+                          grade: typeof record.grade === 'string' ? record.grade.trim() : '',
+                          class: typeof record.class === 'string' ? record.class.trim() : ''
+                        }
+                        // 空行直接跳过，避免空值配置行锁死配置优先校验
+                        if (!gradeClassData.grade || !gradeClassData.class) {
+                          stats.warnings.push(`gradeClass 记录 ${record.id ?? ''} 年级或班级为空，已跳过`)
+                          break
+                        }
+
+                        if (mode === 'merge') {
+                          const existingGradeClass = await tx
+                            .select()
+                            .from(gradeClass)
+                            .where(
+                              and(
+                                eq(gradeClass.grade, gradeClassData.grade),
+                                eq(gradeClass.class, gradeClassData.class)
+                              )
+                            )
+                            .limit(1)
+                          if (existingGradeClass.length === 0) {
+                            await tx.insert(gradeClass).values(gradeClassData)
+                          }
+                        } else {
+                          // 完全恢复模式，检查ID是否已存在
+                          const existingGradeClassWithId = await tx
+                            .select()
+                            .from(gradeClass)
+                            .where(eq(gradeClass.id, record.id))
+                            .limit(1)
+
+                          if (existingGradeClassWithId.length === 0) {
+                            await tx.insert(gradeClass).values({
+                              ...gradeClassData,
+                              id: record.id
+                            })
+                          }
+                        }
+                        break
+
                       case 'systemSettings':
                         // 动态构建系统设置数据，自动跳过不存在的字段
                         let systemSettingsData = {}
                         const systemSettingsFields = [
                           'enablePlayTimeSelection',
                           'instanceId',
+                          'defaultTheme',
+                          'enabledThemes',
                           'telemetryEnabled',
                           'siteTitle',
                           'siteLogoUrl',
@@ -1140,6 +1198,10 @@ export default defineEventHandler(async (event) => {
                           'dailySubmissionLimit',
                           'weeklySubmissionLimit',
                           'monthlySubmissionLimit',
+                          'scheduleDaysBeforeEnabled',
+                          'scheduleDaysBefore',
+                          'scheduleDaysAfterEnabled',
+                          'scheduleDaysAfter',
                           'showBlacklistKeywords',
                           'enableRequestTimeLimitation',
                           'forceBlockAllRequests',
@@ -1164,6 +1226,12 @@ export default defineEventHandler(async (event) => {
                           'smtpFromEmail',
                           'smtpFromName',
                           'allowOAuthRegistration',
+                          'allowRegister',
+                          'registerRequiresApproval',
+                          'registerEmailRequired',
+                          'registerRequiresGradeClass',
+                          'oauthRegisterRequiresApproval',
+                          'submissionNoteRequiresApproval',
                           'oauthRedirectUri',
                           'oauthStateSecret',
                           'oauthProviders',
@@ -1203,6 +1271,8 @@ export default defineEventHandler(async (event) => {
                           'turnstileSecretKey',
                           'autoBackupEnabled',
                           'autoBackupConfig',
+                          'statisticsCodeEnabled',
+                          'statisticsCode',
                           'enabledPlatforms',
                           'platformOrder'
                         ]
@@ -1213,6 +1283,23 @@ export default defineEventHandler(async (event) => {
                             systemSettingsData[field] = record[field]
                           }
                         })
+                        if (Object.prototype.hasOwnProperty.call(systemSettingsData, 'defaultTheme') || Object.prototype.hasOwnProperty.call(systemSettingsData, 'enabledThemes')) {
+                          if (!Object.prototype.hasOwnProperty.call(systemSettingsData, 'defaultTheme') || !Object.prototype.hasOwnProperty.call(systemSettingsData, 'enabledThemes')) {
+                            throw createApiError(400, SERVER_ERROR_CODES.THEME_INVALID_LIST, '主题配置必须同时包含默认主题和启用主题列表')
+                          }
+                          systemSettingsData.enabledThemes = JSON.stringify(validateThemeConfig(systemSettingsData.defaultTheme, systemSettingsData.enabledThemes))
+                        }
+                        for (const field of ['scheduleDaysBeforeEnabled', 'scheduleDaysAfterEnabled']) {
+                          if (Object.prototype.hasOwnProperty.call(systemSettingsData, field) && systemSettingsData[field] !== null && typeof systemSettingsData[field] !== 'boolean') {
+                            throw createApiError(400, SERVER_ERROR_CODES.COMMON_INVALID_PARAMS, `${field} 必须是布尔值`)
+                          }
+                        }
+                        for (const field of ['scheduleDaysBefore', 'scheduleDaysAfter']) {
+                          if (Object.prototype.hasOwnProperty.call(systemSettingsData, field) && (systemSettingsData[field] !== null && (!Number.isInteger(systemSettingsData[field]) || systemSettingsData[field] < 1 || systemSettingsData[field] > 730))) {
+                            throw createApiError(400, SERVER_ERROR_CODES.COMMON_INVALID_PARAMS, `${field} 必须是 1-730 的正整数`)
+                          }
+                        }
+                        systemSettingsData = normalizeScheduleVisibilitySettings(systemSettingsData)
                         systemSettingsData = omitMaskedSystemSettingsSecrets(systemSettingsData)
 
                         if (mode === 'merge') {
@@ -1798,6 +1885,7 @@ export default defineEventHandler(async (event) => {
                           preferredPlayTimeId: validReplayPlayTimeId,
                           submissionNote: record.submissionNote ?? null,
                           submissionNotePublic: record.submissionNotePublic === true,
+                          submissionNotePublicStatus: record.submissionNotePublicStatus ?? null,
                           createdAt: record.createdAt ? new Date(record.createdAt) : new Date(),
                           updatedAt: record.updatedAt ? new Date(record.updatedAt) : new Date()
                         }
@@ -2483,6 +2571,23 @@ export default defineEventHandler(async (event) => {
     console.log(`✅ 数据恢复完成`)
     console.log(`📊 处理了 ${restoreResults.details.tablesProcessed} 个表`)
     console.log(`📊 恢复了 ${restoreResults.details.recordsRestored} 条记录`)
+
+    // 防锁死：恢复开关前校验 SMTP 已配置，否则剥离 registerEmailRequired（避免恢复后注册必填邮箱却无法发码）
+    try {
+      const restoredSettings = await db.select().from(systemSettings).limit(1)
+      if (
+      restoredSettings[0]?.registerEmailRequired &&
+      (!restoredSettings[0]?.smtpEnabled || !restoredSettings[0]?.smtpHost)
+    ) {
+        await db
+          .update(systemSettings)
+          .set({ registerEmailRequired: false })
+          .where(eq(systemSettings.id, restoredSettings[0].id))
+        console.warn('⚠️ SMTP 未配置，已剥离 registerEmailRequired，避免注册邮箱流程不可用')
+      }
+    } catch (settingsError) {
+      console.error('恢复后设置一致性校验失败:', settingsError)
+    }
 
     // 重置所有自增序列
     console.log(`🔄 开始重置自增序列...`)

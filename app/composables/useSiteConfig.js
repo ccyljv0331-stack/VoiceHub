@@ -1,6 +1,6 @@
 import { computed, ref, readonly } from 'vue'
 import { getAggregateOAuthLoginTypesOrDefault, getProviderDisplayName } from '~/utils/oauth'
-import { useTheme } from '~/composables/useTheme'
+import { applyThemeConfig, useTheme } from '~/composables/useTheme'
 
 const THEME_LOGO_SEPARATOR = '||'
 
@@ -60,7 +60,13 @@ const siteConfig = ref({
   aggregateOAuthEnabled: false,
   aggregateOAuthLoginType: 'qq',
   customOAuthEnabled: false,
-  customOAuthDisplayName: ''
+  customOAuthDisplayName: '',
+  allowRegister: false,
+  submissionNoteRequiresApproval: false,
+  registerEmailRequired: false,
+  registerRequiresGradeClass: false,
+  defaultTheme: 'System',
+  enabledThemes: JSON.stringify(['System', 'ClassicDark', 'ClassicLight', 'ModernLight'])
 })
 
 const isLoaded = ref(false)
@@ -94,6 +100,14 @@ export const useSiteConfig = () => {
 
       const data = await response.json()
       siteConfig.value = data
+      try {
+        applyThemeConfig(
+          data.defaultTheme,
+          typeof data.enabledThemes === 'string' ? JSON.parse(data.enabledThemes) : data.enabledThemes
+        )
+      } catch {
+        applyThemeConfig('System', null)
+      }
       isLoaded.value = true
     } catch (error) {
       console.error('获取站点配置失败:', error)
@@ -109,6 +123,7 @@ export const useSiteConfig = () => {
         icpNumber: '',
         gonganNumber: '',
         enableReplayRequests: false,
+        enableSubmissionRestriction: false,
         enableCollaborativeSubmission: true,
         enableSubmissionRemarks: false,
         allowOAuthRegistration: false,
@@ -125,7 +140,13 @@ export const useSiteConfig = () => {
         aggregateOAuthEnabled: false,
         aggregateOAuthLoginType: 'qq',
         customOAuthEnabled: false,
-        customOAuthDisplayName: ''
+        customOAuthDisplayName: '',
+        allowRegister: false,
+        submissionNoteRequiresApproval: false,
+        registerEmailRequired: false,
+        registerRequiresGradeClass: false,
+        defaultTheme: 'System',
+        enabledThemes: JSON.stringify(['System', 'ClassicDark', 'ClassicLight', 'ModernLight'])
       }
       isLoaded.value = true
     } finally {
@@ -153,6 +174,9 @@ export const useSiteConfig = () => {
   const gonganNumber = computed(() => siteConfig.value.gonganNumber || '')
   const showBeianIcon = computed(() => siteConfig.value.showBeianIcon || false)
   const enableReplayRequests = computed(() => siteConfig.value.enableReplayRequests || false)
+  const enableSubmissionRestriction = computed(
+    () => siteConfig.value.enableSubmissionRestriction === true
+  )
   const enableCollaborativeSubmission = computed(
     () => siteConfig.value.enableCollaborativeSubmission !== false
   )
@@ -160,12 +184,21 @@ export const useSiteConfig = () => {
   const enableSubmissionLimit = computed(() => siteConfig.value.enableSubmissionLimit === true)
   const enableCardCodeRequests = computed(() => siteConfig.value.enableCardCodeRequests === true)
   const requireCardCodeForRequests = computed(
-    () => siteConfig.value.requireCardCodeForRequests === true
+    () =>
+      enableCardCodeRequests.value && siteConfig.value.requireCardCodeForRequests === true
   )
   const enableCardCodeLimitBypass = computed(
     () => siteConfig.value.enableCardCodeLimitBypass === true
   )
   const allowOAuthRegistration = computed(() => siteConfig.value.allowOAuthRegistration === true)
+  const allowRegister = computed(() => siteConfig.value.allowRegister === true)
+  const registerEmailRequired = computed(() => siteConfig.value.registerEmailRequired === true)
+  const registerRequiresGradeClass = computed(
+    () => siteConfig.value.registerRequiresGradeClass === true
+  )
+  const submissionNoteRequiresApproval = computed(
+    () => siteConfig.value.submissionNoteRequiresApproval === true
+  )
   const captchaEnabled = computed(() => siteConfig.value.captchaEnabled === true)
   const captchaProvider = computed(() => siteConfig.value.captchaProvider || 'graphic')
   const turnstileSiteKey = computed(() => siteConfig.value.turnstileSiteKey || '')
@@ -240,6 +273,7 @@ export const useSiteConfig = () => {
     gonganNumber,
     showBeianIcon,
     enableReplayRequests,
+    enableSubmissionRestriction,
     enableCollaborativeSubmission,
     enableSubmissionRemarks,
     enableSubmissionLimit,
@@ -247,6 +281,10 @@ export const useSiteConfig = () => {
     requireCardCodeForRequests,
     enableCardCodeLimitBypass,
     allowOAuthRegistration,
+    allowRegister,
+    submissionNoteRequiresApproval,
+    registerEmailRequired,
+    registerRequiresGradeClass,
     captchaEnabled,
     captchaProvider,
     turnstileSiteKey,

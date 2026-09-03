@@ -1,3 +1,5 @@
+import { isTrustedOrigin, normalizeOrigin } from '~~/server/utils/request-utils'
+
 export default defineEventHandler((event) => {
   const requestUrl = getRequestURL(event)
   const pathname = requestUrl.pathname
@@ -17,24 +19,32 @@ export default defineEventHandler((event) => {
     return
   }
 
-  // 解析可信来源：优先使用 NUXT_PUBLIC_HOST，未配置时回退到 Host 头
+  // 显式配置 NUXT_PUBLIC_HOST 时使用配置来源校验。
+  // 未配置时仍使用 Host 头；云平台等公开 Host 继续校验，仅当反向代理把 Host 改写为回环地址时跳过。
   const config = useRuntimeConfig(event)
-  let configuredHost = config.public?.host
-
+  let configuredHost = typeof config.public?.host === 'string' ? config.public.host.trim() : ''
   if (!configuredHost) {
-    const hostHeader = getHeader(event, 'host')
-    
-    if (hostHeader) {
-      configuredHost = (hostHeader.split(',')[0] || '').trim()
-      
-      // 如果 x-forwarded-proto 存在，可以带上协议，使校验更精准
-      const forwardedProto = getHeader(event, 'x-forwarded-proto')
-      if (forwardedProto && !configuredHost.includes('://')) {
-        const proto = (forwardedProto.split(',')[0] || '').trim()
-        configuredHost = `${proto}://${configuredHost}`
-      }
-    } else {
+    const hostHeader = getHeader(event, 'x-forwarded-host') || getHeader(event, 'host')
+    if (!hostHeader) {
       throw createError({ statusCode: 400, message: 'Bad Request: 缺少Host请求头' })
+    }
+
+    configuredHost = (hostHeader.split(',')[0] || '').trim()
+
+    try {
+      const hostOrigin = normalizeOrigin(configuredHost, requestUrl.protocol)
+      if (isLoopbackHostname(hostOrigin.hostname)) {
+        return
+      }
+    } catch {
+      throw createError({ statusCode: 400, message: 'Bad Request: Host请求头无效' })
+    }
+
+    // 如果 x-forwarded-proto 存在，可以带上协议，使校验更精准
+    const forwardedProto = getHeader(event, 'x-forwarded-proto')
+    if (forwardedProto && !configuredHost.includes('://')) {
+      const proto = (forwardedProto.split(',')[0] || '').trim()
+      configuredHost = `${proto}://${configuredHost}`
     }
   }
 
@@ -45,35 +55,28 @@ export default defineEventHandler((event) => {
   const secFetchMode = getHeader(event, 'sec-fetch-mode')
   const sourceUrl = origin || referer
 
+  // Fetch Metadata 由浏览器生成且脚本无法修改，同源请求不应被部署平台改写的 Host 误伤。
+  if (secFetchSite === 'same-origin') return
+
   if (sourceUrl) {
     try {
-      const normalizeOrigin = (value: string, fallbackProtocol: string) => {
-        const normalizedValue = value.includes('://') ? value : `${fallbackProtocol}//${value}`
-        const url = new URL(normalizedValue)
-        return {
-          origin: url.origin,
-          protocol: url.protocol,
-          hostname: url.hostname,
-          port: url.port || (url.protocol === 'https:' ? '443' : '80')
-        }
-      }
-
       const sourceOrigin = normalizeOrigin(sourceUrl, requestUrl.protocol)
       const trustedOrigin = normalizeOrigin(configuredHost, requestUrl.protocol)
-      const isLocalhost = (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '[::1]'
       const isSameLoopbackOrigin =
-        isLocalhost(sourceOrigin.hostname) &&
-        isLocalhost(trustedOrigin.hostname) &&
+        isLoopbackHostname(sourceOrigin.hostname) &&
+        isLoopbackHostname(trustedOrigin.hostname) &&
         sourceOrigin.protocol === trustedOrigin.protocol &&
         sourceOrigin.port === trustedOrigin.port
 
-      // 额外检查：来源是否与当前请求的 Host 头一致（覆盖域名 / IP 直连场景）
-      // Host 头不会被前端 JS 伪造，因此 sourceOrigin.origin === hostOrigin 是有效的第二信任锚点
-      const requestHost = getHeader(event, 'host')
-      const hostOrigin = getOriginFromHost(requestHost, requestUrl.protocol)
-      const matchesRequestHost = hostOrigin && sourceOrigin.origin === hostOrigin
+      const matchesConfiguredOrigin = isTrustedOrigin(sourceOrigin, trustedOrigin)
+      const requestHost = getHeader(event, 'x-forwarded-host') || getHeader(event, 'host')
+      const requestProto = getHeader(event, 'x-forwarded-proto')?.split(',')[0]?.trim() || requestUrl.protocol.replace(':', '')
+      const hostOrigin = requestHost
+        ? normalizeOrigin(`${requestProto}://${requestHost.split(',')[0].trim()}`, requestUrl.protocol)
+        : null
+      const matchesRequestHost = hostOrigin && isTrustedOrigin(sourceOrigin, hostOrigin)
 
-      if (sourceOrigin.origin !== trustedOrigin.origin && !isSameLoopbackOrigin && !matchesRequestHost) {
+      if (!matchesConfiguredOrigin && !matchesRequestHost && !isSameLoopbackOrigin) {
         console.warn(`[CORS Middleware] 拦截跨域请求: 来源 ${sourceOrigin.origin}, 期望 ${trustedOrigin.origin}, 路径 ${pathname}`)
         throw createError({
           statusCode: 403,
@@ -108,19 +111,8 @@ export default defineEventHandler((event) => {
   }
 })
 
-/**
- * 从 Host 头提取 origin
- * 仅使用标准 Host 头（不可被前端 JS 伪造），不信任 X-Forwarded-Host
- */
-function getOriginFromHost(hostHeader: string | undefined, defaultProtocol: string): string | null {
-  if (!hostHeader) return null
-  const firstHost = (hostHeader.split(',')[0] || '').trim()
-  try {
-    const normalized = firstHost.includes('://') ? firstHost : `${defaultProtocol}//${firstHost}`
-    return new URL(normalized).origin
-  } catch {
-    return null
-  }
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
 function isTrustedFetchMetadata(
