@@ -679,6 +679,17 @@
                 </button>
                 <button
                   :disabled="localScheduledSongs.length === 0"
+                  class="flex items-center justify-center p-2 bg-bg-primary border border-border-secondary hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary rounded-xl transition-all group relative disabled:opacity-50 disabled:cursor-not-allowed"
+                  @click="openPlaylistExportDialog"
+                >
+                  <FileSpreadsheet class="w-3.5 h-3.5" />
+                  <span
+                    class="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-bg-tertiary text-[9px] text-text-secondary rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-border-tertiary"
+                    >{{ locale.exportPlaylist }}</span
+                  >
+                </button>
+                <button
+                  :disabled="localScheduledSongs.length === 0"
                   class="flex items-center justify-center p-2 bg-bg-primary border border-border-secondary hover:bg-bg-tertiary text-text-tertiary hover:text-success rounded-xl transition-all group relative disabled:opacity-50 disabled:cursor-not-allowed"
                   @click="markAllAsPlayed"
                 >
@@ -1015,6 +1026,14 @@
               <Download class="w-5 h-5" />
             </button>
             <button
+              class="w-11 h-11 shrink-0 bg-bg-secondary border border-border-secondary text-text-tertiary rounded-xl flex items-center justify-center active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="localScheduledSongs.length === 0"
+              :title="locale.exportPlaylist"
+              @click="openPlaylistExportDialog"
+            >
+              <FileSpreadsheet class="w-5 h-5" />
+            </button>
+            <button
               class="w-11 h-11 shrink-0 bg-bg-secondary border border-border-secondary text-text-tertiary rounded-xl flex items-center justify-center active:scale-95 transition-all"
               @click="saveDraft"
             >
@@ -1110,6 +1129,16 @@
     :show="showDownloadDialog"
     :songs="localScheduledSongs"
     @close="showDownloadDialog = false"
+  />
+
+  <!-- 导出歌单对话框 -->
+  <SchedulePlaylistExportModal
+    :show="showPlaylistExportDialog"
+    :songs="localScheduledSongs"
+    :play-times="playTimes"
+    :schedule-date="selectedDate"
+    :play-time-label="playTimeEnabled && selectedPlayTime ? getPlayTimeName(selectedPlayTime) : ''"
+    @close="showPlaylistExportDialog = false"
   />
 
   <div
@@ -1847,9 +1876,11 @@ import {
   Loader2,
   Sparkles,
   FolderPlus,
+  FileSpreadsheet,
   Lock
 } from '@lucide/vue'
 import SongDownloadDialog from './SongDownloadDialog.vue'
+import SchedulePlaylistExportModal from './SchedulePlaylistExportModal.vue'
 import SubmissionRemarkDialog from './SubmissionRemarkDialog.vue'
 import ConfirmDialog from '../UI/ConfirmDialog.vue'
 import Icon from '~/components/UI/Icon.vue'
@@ -2087,6 +2118,12 @@ const confirmAction = ref(null)
 const showDownloadDialog = ref(false)
 const openDownloadDialog = () => {
   showDownloadDialog.value = true
+}
+
+// 导出歌单（CSV）
+const showPlaylistExportDialog = ref(false)
+const openPlaylistExportDialog = () => {
+  showPlaylistExportDialog.value = true
 }
 
 // 重播申请弹窗相关
@@ -2355,6 +2392,15 @@ const songPool = ref([])
 const poolLoading = ref(false)
 // 备选池已包含的歌曲 ID 集合，用于禁用重复加入按钮
 const poolSongIds = computed(() => new Set(songPool.value.map((p) => p.songId)))
+// 备选池统一过滤：已播放或已在任意日期排期（含草稿）/已加入当前播放顺序的歌曲不再是候选
+const filteredPoolSongs = computed(() => {
+  const scheduledIds = new Set(localScheduledSongs.value.map((s) => s.song && s.song.id).filter(Boolean))
+  return songPool.value.filter((item) => {
+    if (item.played) return false
+    if (scheduledSongIds.value.has(item.songId) || scheduledIds.has(item.songId)) return false
+    return true
+  })
+})
 const showMoveDateDialog = ref(false)
 const moveTargetDate = ref('')
 const showCopyDateDialog = ref(false)
@@ -2658,7 +2704,11 @@ const pageStates = reactive({
   pool: 1
 })
 const currentPage = computed({
-  get: () => pageStates[activeTab.value] || 1,
+  get: () => {
+    const page = pageStates[activeTab.value] || 1
+    // 页码不超过总页数，避免最后一页歌曲被移出后显示空页
+    return Math.min(page, Math.max(1, totalPages.value))
+  },
   set: (val) => {
     if (pageStates[activeTab.value] !== undefined) {
       pageStates[activeTab.value] = val
@@ -2723,13 +2773,7 @@ const availableGrades = computed(() => {
 const allUnscheduledSongs = computed(() => {
   // 备选池模式
   if (activeTab.value === 'pool') {
-    let poolSongs = songPool.value.filter((item) => {
-      // 与普通歌曲逻辑一致：已在任意日期排期（含草稿）或已加入当前播放顺序的歌曲不再展示
-      const isScheduledInCurrentView = localScheduledSongs.value.some(
-        (s) => (s.song && s.song.id === item.songId) || s.songId === item.songId
-      )
-      return !isScheduledInCurrentView && !scheduledSongIds.value.has(item.songId)
-    })
+    let poolSongs = filteredPoolSongs.value
     if (searchQuery.value) {
       const query = searchQuery.value.toLowerCase()
       poolSongs = poolSongs.filter((song) => {
@@ -3580,7 +3624,8 @@ const resolveClientAudioDuration = async (song, signal) => {
           musicInfo: {
             name: song.title,
             artist: song.artist,
-            album: song.album || undefined
+            album: song.album || undefined,
+            rawItem: song
           }
         }
       )
@@ -4031,9 +4076,9 @@ const autoScheduleCandidates = computed(() => {
   )
   const excludeIds = new Set([...scheduledIds, ...otherDateDraftIds])
 
-  // 备选池模式
+  // 备选池模式：复用备选池统一过滤（排除已排期/已播放），与备选池展示口径一致
   if (activeTab.value === 'pool') {
-    return songPool.value
+    return filteredPoolSongs.value
       .filter((item) => !excludeIds.has(item.songId))
       .map(poolCandidateFromItem)
   }
@@ -4041,8 +4086,8 @@ const autoScheduleCandidates = computed(() => {
   // 待排库/重播/所有：复用 allUnscheduledSongs 的过滤逻辑，再排除已排期歌曲
   const base = allUnscheduledSongs.value.filter((s) => !excludeIds.has(s.id))
   if (activeTab.value === 'all') {
-    // 「所有」额外纳入备选池未排期的歌曲
-    const poolCandidates = songPool.value
+    // 「所有」额外纳入备选池未排期且未播放的歌曲
+    const poolCandidates = filteredPoolSongs.value
       .filter((item) => !excludeIds.has(item.songId))
       .map(poolCandidateFromItem)
     const baseIds = new Set(base.map((s) => s.id))
