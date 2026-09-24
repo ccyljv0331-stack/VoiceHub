@@ -2027,6 +2027,7 @@ export const admin = {
       download: 'Download',
       delete: 'Delete',
       addManual: 'Add Manually',
+      duplicate: 'Duplicates',
       refresh: 'Refresh',
       viewRemark: 'View Remark',
       edit: 'Edit Song',
@@ -2070,6 +2071,15 @@ export const admin = {
     empty: {
       search: 'No matching songs found',
       default: 'No song data'
+    },
+    duplicateModal: {
+      title: 'Duplicate Check',
+      subtitle: (groups: number, songs: number) => `${groups} dup group(s), ${songs} songs in current filter`,
+      matchHint: 'Matched by title and artist, ignoring case, spaces, punctuation, Chinese character variants and feat. tags',
+      empty: 'No duplicate songs in the current filter',
+      dupCount: (count: number) => `${count} dup`,
+      sameSource: 'Same source',
+      diffSource: 'Diff sources'
     },
     dialog: {
       cancel: 'Cancel',
@@ -4492,6 +4502,7 @@ export const serverErrors = {
   SONG_DURATION_PLATFORM_REQUIRED: 'Song missing platform or music ID, cannot retrieve duration',
   SONG_COVER_PLATFORM_REQUIRED: 'Song missing platform or music ID, cannot retrieve cover',
   SONG_CARD_RELEASE_FAILED: 'Failed to release the request card; the withdrawal was aborted',
+  SONG_CARD_RESTORE_FAILED: 'Failed to restore the request card; the draft save was aborted',
   SONG_NO_ACTIVE_SEMESTER_IMPORT: 'No active semester is set, so songs cannot be imported. Please ask an administrator to set an active semester first.',
   SONG_FETCH_VOTERS_FAILED: 'Failed to fetch the voter list',
   SONG_FETCH_STATUS_FAILED: 'Failed to fetch the submission status',

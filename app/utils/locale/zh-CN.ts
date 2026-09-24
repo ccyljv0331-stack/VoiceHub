@@ -2036,6 +2036,7 @@ export const admin = {
       download: '下载',
       delete: '删除',
       addManual: '手动添加',
+      duplicate: '重复检测',
       refresh: '刷新',
       viewRemark: '查看备注留言',
       edit: '编辑歌曲',
@@ -2079,6 +2080,15 @@ export const admin = {
     empty: {
       search: '没有找到匹配的歌曲',
       default: '暂无歌曲数据'
+    },
+    duplicateModal: {
+      title: '重复歌曲检测',
+      subtitle: (groups: number, songs: number) => `当前筛选下发现 ${groups} 组重复，共 ${songs} 首`,
+      matchHint: '按歌名与歌手判定重复，忽略大小写、空格、标点、繁简体与 feat. 标记',
+      empty: '当前筛选范围内没有重复歌曲',
+      dupCount: (count: number) => `${count} 首重复`,
+      sameSource: '音源相同',
+      diffSource: '音源不同'
     },
     dialog: {
       cancel: '取消',
@@ -4501,6 +4511,7 @@ export const serverErrors = {
   SONG_DURATION_PLATFORM_REQUIRED: '歌曲缺少平台或音乐 ID 信息，无法获取时长',
   SONG_COVER_PLATFORM_REQUIRED: '歌曲缺少平台或音乐 ID 信息，无法获取封面',
   SONG_CARD_RELEASE_FAILED: '点歌券释放失败，撤回已终止',
+  SONG_CARD_RESTORE_FAILED: '点歌券返还失败，保存草稿已终止',
   SONG_NO_ACTIVE_SEMESTER_IMPORT: '系统未设置当前活跃学期，无法导入歌曲。请联系管理员先设置活跃学期。',
   SONG_FETCH_VOTERS_FAILED: '获取投票人员列表失败',
   SONG_FETCH_STATUS_FAILED: '获取投稿状态失败',
