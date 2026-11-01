@@ -58,6 +58,15 @@ export const siteConfig = {
   statisticsCodeHint:
     '将注入到所有页面的 <head> 中，支持任意 HTML/JS 统计代码。保存后约 1 分钟内生效。',
 
+  // 自定义样式
+  customCssSection: '自定义样式',
+  customCssEnabled: '启用自定义 CSS',
+  customCssEnabledDesc: '开启后才会把下方 CSS 注入全站页面',
+  customCss: '自定义 CSS',
+  customCssPlaceholder: ':root[data-theme] { --primary: #e11d48; }',
+  customCssHint:
+    '作为最后一个 <style> 注入所有页面的 <head>。主题变量写在 :root[data-theme="…"] 上，权重高于单独的 :root，覆盖须用同级的 :root[data-theme]；改普通元素样式不受此限制。上限 65536 字符，内容不得包含 </style>。保存后约 1 分钟内生效。',
+
   // 视觉识别
   themeSettings: '主题设置',
   themeSettingsDesc: '为每个主题单独设置启用状态，并使用星标指定默认主题。',
@@ -1466,6 +1475,7 @@ export const pages = {
     fallbackSource: '当前播放链接无效，已切换备用音源',
     slowNetworkRetry: '当前播放链接加载过慢，正在切换备用音源',
     slowNetworkFailed: '播放链接加载过慢，请检查网络后重试',
+    previewOnly: '该歌曲当前只能获取到试听片段，已尝试切换音源',
     consecutiveFailures: '连续多首歌曲播放失败，已停止自动播放',
     networkOffline: '网络连接已断开，请检查网络后重试',
     scheduleSyncFailed: '播放队列更新失败，当前队列已保留',
@@ -2626,6 +2636,10 @@ export const admin = {
       deselectAll: '取消全选',
       deleteCache: '删除缓存',
       preloadSong: '预下载此歌曲',
+      durationMismatchTip: (actual: string, recorded: string) =>
+        `实测时长 ${actual}，系统记录 ${recorded}，请检查时长`,
+      preloadDurationMismatchCount: (count: number) =>
+        `${count} 首歌曲实测时长与系统记录不一致，请检查`,
       emptySongs: '暂无歌曲',
       processProgress: '处理进度',
       downloadProgress: '下载进度',
@@ -2895,6 +2909,7 @@ export const admin = {
     replay: '重播',
     crossSemester: '跨学期',
     requesterPrefix: '投稿人：',
+    anonymousRequester: '匿名投稿',
     replayRequestsPrefix: '申请重播：',
     popularityPrefix: '热度：',
     replayCount: (count: number) => `${count}人`,
@@ -3231,6 +3246,10 @@ export const admin = {
       candidateDurationsSkipped: '当前无候选歌曲可刷新时长',
       confirmAutoScheduleApplied: (count, duration) =>
         `已自动排期 ${count} 首歌曲，合计 ${duration}`,
+      suspiciousDurationTitle: (count) => `发现 ${count} 首歌曲时长疑似试听片段`,
+      suspiciousDurationDesc: (seconds) =>
+        `时长不超过 ${seconds} 秒，可能只获取到试听片段；重新获取会按音源元数据校正。`,
+      suspiciousDurationAction: '批量重新获取',
       allDurationsProgressTotal: '{0} 首歌',
       allDurationsProgressWithCount: '{0}/{1}（成功{2} 失败{3}）',
       candidateDurationsProgressTotal: '{0} 首歌',
@@ -3242,7 +3261,7 @@ export const admin = {
       excludedByPlayTime: (count: number) =>
         `${count} 首歌曲指定了其它播出时段，已按硬约束排除在本次自动排期之外`,
       preferredDateHits: (count: number) =>
-        `${count} 首歌曲的期望播出日期是当天，将优先安排`
+        `${count} 首歌曲的期望播出日期是当天，入选概率会相应提高（不保证排上）`
     },
     playlistFilterModal: {
       title: '歌单重复过滤',
@@ -5233,6 +5252,8 @@ export const serverErrors = {
   THEME_INVALID_LIST: '启用的主题列表无效',
   THEME_INVALID_DEFAULT: '默认主题必须有效且处于启用状态',
   THEME_SYSTEM_REQUIRES_CLASSIC: '跟随系统时必须同时启用经典深色和经典浅色',
+  SETTINGS_CUSTOM_CSS_TOO_LONG: '自定义 CSS 不能超过 {0} 个字符',
+  SETTINGS_CUSTOM_CSS_STYLE_CLOSER: '自定义 CSS 不能包含 </style>，否则样式标签会被提前闭合',
   SETTINGS_GRADE_CLASS_OPTIONS_MISSING: '请先在年级班级管理中配置年级班级，再启用该选项',
   SETTINGS_CAPTCHA_PROVIDER_INVALID:
     '验证类型必须是图形验证码、Cloudflare Turnstile 或阿里云 ESA AI 验证码',
@@ -5450,6 +5471,7 @@ export const serverErrors = {
   USER_CODE_TOO_MANY_ATTEMPTS: '验证码错误次数过多，请重新发送',
   BACKUP_DISABLED: '自动备份未启用',
   MUSIC_SOURCE_PLATFORM_DISABLED: '平台“{0}”已关闭，可用平台：{1}',
+  MUSIC_URL_RESOLVE_FAILED: '播放链接解析失败，请稍后重试',
   QQ_COMMENT_FETCH_FAILED: 'QQ 音乐评论获取失败，请稍后重试',
   PLUGIN_INVALID_CONFIG: '音源插件配置无效',
   PLUGIN_CONFIG_CONFLICT: '配置已被修改，请刷新后重试',

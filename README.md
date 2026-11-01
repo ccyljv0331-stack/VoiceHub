@@ -197,6 +197,8 @@ docker-compose up -d
 
 - 用户名：admin
 - 密码：admin123
+- 默认口令按临时密码处理，首次登录需设置新密码
+- 启动时自动检测仍在使用默认口令的超级管理员，补上强制改密标记
 
 #### 方式二：使用预构建镜像
 
@@ -539,6 +541,8 @@ pnpm run create-admin
 
 - 用户名：admin
 - 密码：admin123
+- 默认口令按临时密码处理，首次登录需设置新密码
+- 启动时自动检测仍在使用默认口令的超级管理员，补上强制改密标记
 
 6. 启动开发服务器
 
@@ -640,8 +644,8 @@ VoiceHub 实现了细粒度的权限控制系统：
 
 #### 角色类型
 
-- **超级管理员 (SUPER_ADMIN)**：拥有所有系统权限，包括用户管理、系统配置、数据库管理等
-- **管理员 (ADMIN)**：拥有日常管理权限，如用户管理、排期管理、歌曲管理、系统配置等
+- **超级管理员 (SUPER_ADMIN)**：拥有所有系统权限，包括用户管理、系统设置中的凭据与策略配置、备份恢复、数据库管理等
+- **管理员 (ADMIN)**：内容与用户日常管理权限，包括用户管理、排期管理、歌曲管理、点歌券、数据分析，以及投稿与播放限制、限额、卡密、音源平台等运营配置
 - **歌曲管理员 (SONG_ADMIN)**：专门负责歌曲相关管理，包括排期管理、歌曲管理、打印排期等
 - **普通用户 (USER)**：基本的点歌、投票和查看权限
 
@@ -654,7 +658,7 @@ VoiceHub 实现了细粒度的权限控制系统：
 #### 权限继承与分配
 
 - **SUPER_ADMIN**：拥有所有权限
-- **ADMIN**：拥有除数据库管理外的所有权限
+- **ADMIN**：内容与用户日常管理、运营类系统配置
 - **SONG_ADMIN**：拥有内容管理相关权限（排期、歌曲、打印）
 - **USER**：仅拥有基本的点歌和查看权限
 
@@ -919,8 +923,6 @@ VoiceHub/
 │   │   ├── usePermissions.ts   # 权限管理hooks
 │   │   ├── usePasswordStrength.ts # 密码强度检测hooks
 │   │   ├── usePlayerLayout.ts  # 播放器布局（固定底部/自由拖拽）偏好hooks
-│   │   ├── useProgress.ts      # 进度管理hooks
-│   │   ├── useProgressEvents.ts # 进度事件hooks
 │   │   ├── useRequestDedup.ts  # 请求去重hooks
 │   │   ├── useSafeLocale.ts    # 安全 i18n 文本包装hooks
 │   │   ├── useScrollMemory.ts  # 页面滚动位置记忆hooks
@@ -1022,6 +1024,8 @@ VoiceHub/
 │       ├── playerLayout.ts    # 播放器布局模式与自由拖拽坐标解析
 │       ├── blacklist.ts       # 歌曲类型黑名单候选值共享（语种/曲风）
 │       ├── sentryUpstreamMusicErrors.ts # Sentry 上游音源错误过滤
+│       ├── preview-duration.ts # 播放地址时长与歌曲时长比对（试听片段检测）
+│       ├── song-duration.ts   # 疑似试听片段时长判定
 │       ├── song-name-normalize.ts # 歌曲名称归一化匹配
 │       ├── neteaseApi.ts      # 网易云音乐API
 │       ├── neteaseCatalog.ts  # 网易云曲库播放响应的歌曲、音质与试听标记核验
@@ -1031,6 +1035,8 @@ VoiceHub/
 │       ├── email-verification.ts # 注册邮箱验证码
 │       ├── embedded-browser.ts # 微信/QQ内置浏览器UA检测
 │       ├── password-policy.ts # 统一密码策略
+│       ├── settingsPermissions.ts # 系统设置中仅超级管理员可读写字段清单
+│       ├── custom-css-policy.ts # 自定义CSS安全策略
 │       ├── oauth.ts           # OAuth工具
 │       ├── autoSchedule.ts    # 自动排期算法
 │       ├── schedulePlayTime.ts # 排期播出时段判定（带时段排期统计）
@@ -1283,10 +1289,12 @@ VoiceHub/
 │   │   │   │   ├── playlist-songs.post.ts # 获取QQ音乐歌单内歌曲
 │   │   │   │   ├── playlists.post.ts # 获取用户创建与收藏的歌单
 │   │   │   │   └── resolve-mid.get.ts # QQ数字songId解析为字母songmid
-│   │   │   └── search/              # 搜索API
-│   │   │       ├── mg.get.ts        # 咪咕音乐搜索
-│   │   │       ├── tx.get.ts        # 腾讯音乐搜索
-│   │   │       └── wy.get.ts        # 网易云音乐搜索
+│   │   │   ├── search/              # 搜索API
+│   │   │   │   ├── mg.get.ts        # 咪咕音乐搜索
+│   │   │   │   ├── tx.get.ts        # 腾讯音乐搜索
+│   │   │   │   └── wy.get.ts        # 网易云音乐搜索
+│   │   │   └── wy/                   # 网易云音源代理API
+│   │   │       └── url.post.ts      # ikun 网易云备用源服务端代理取链
 │   │   ├── platform-config/  # 平台管理公开API
 │   │   │   └── index.get.ts      # 获取平台启用与排序配置
 │   │   ├── notifications/  # 通知系统API
@@ -1340,9 +1348,6 @@ VoiceHub/
 │   │   │   └── index.ts             # 播放时间管理
 │   │   ├── request-times/  # 点歌时间API
 │   │   │   └── index.ts             # 点歌时间管理
-│   │   ├── progress/       # 进度条API
-│   │   │   ├── events.ts            # 进度事件
-│   │   │   └── id.ts                # 进度ID管理
 │   │   ├── proxy/          # 代理服务API
 │   │   │   └── image.get.ts         # 图片代理（解决HTTP/HTTPS混合内容及跨域问题）
 │   │   ├── semesters/      # 学期API
@@ -1418,6 +1423,7 @@ VoiceHub/
 │   │   ├── 01.pre-warm-ssr.ts # SSR预热插件
 │   │   ├── error-handler.ts # 错误处理插件
 │   │   ├── redis-lifecycle.ts # Redis短期状态连接生命周期
+│   │   ├── custom-css.ts   # 自定义 CSS 注入插件
 │   │   └── statistics-code.ts # 站点统计代码注入插件
 │   ├── services/           # 业务服务层
 │   │   ├── apiLogService.ts # API日志服务
@@ -1466,6 +1472,7 @@ VoiceHub/
 │   │   ├── geo.ts          # 地理位置工具
 │   │   ├── grade-class-core.ts # 年级班级选项纯函数
 │   │   ├── grade-class-options.ts # 年级班级选项提取工具
+│   │   ├── identity-secrets.ts # 身份响应脱敏（TOTP 共享密钥不回传）
 │   │   ├── initial-password-policy.ts # 初始密码设置状态策略
 │   │   ├── important-notification-policy.ts # 重要通知发送与展示策略
 │   │   ├── notification-history-policy.ts # 通知批次引用、筛选与分页策略
@@ -1488,6 +1495,7 @@ VoiceHub/
 │   │   │   ├── tickets.ts   # 加密凭证签发与校验
 │   │   │   └── types.ts     # 插件类型定义
 │   │   ├── native_common.ts # 原生API通用工具
+│   │   ├── music-resolve-rate-limit.ts # 匿名播放取链共享限流
 │   │   ├── native_tx.ts    # 腾讯音乐原生API
 │   │   ├── native_wy.ts    # 网易云音乐原生API
 │   │   ├── oauth-providers.ts # OAuth提供商类型与纯函数工具
@@ -1495,7 +1503,7 @@ VoiceHub/
 │   │   ├── oauth-token.ts  # OAuth令牌工具
 │   │   ├── oauth-identity.ts # OAuth身份绑定与头像同步工具
 │   │   ├── oauth.ts        # OAuth通用工具
-│   │   ├── outbound-url.ts # 备份出站地址元数据/内部域名拦截
+│   │   ├── outbound-url.ts # 备份出站地址校验、DNS 固定与重定向拦截
 │   │   ├── pagination.ts   # 分页参数解析与上限夹取
 │   │   ├── permissions.js  # 权限系统配置
 │   │   ├── qqComment.ts    # QQ音乐评论数据归一化
@@ -1533,6 +1541,7 @@ VoiceHub/
 │   │   ├── system-settings-helper.ts # 系统设置读取与强制改密判断工具
 │   │   ├── system-event-buffer.ts # 系统看板进程内运行事件环形缓冲
 │   │   ├── theme-config.ts # 主题配置校验与解析工具
+│   │   ├── ttl-cache.ts  # 模块级 TTL 缓存
 │   │   ├── userDisplayName.ts # 同名用户消歧统一口径（仅在读用户参与统计）
 │   │   ├── telemetry.ts    # 遥测与错误追踪工具
 │   │   ├── user.ts         # 用户相关工具函数
@@ -1709,7 +1718,7 @@ app/assets/css/themes/
 
 ### 管理员
 
-1. 使用管理员账号登录（默认账号：admin，密码：admin123）
+1. 使用管理员账号登录（默认账号：admin，密码：admin123，首次登录需设置新密码）
 2. 进入管理后台，选择相应功能标签
 3. **排期管理**：可以看到左侧"待排歌曲"和右侧"播放顺序"
    - 通过拖拽将歌曲从左侧添加到右侧的排期列表
