@@ -2,11 +2,8 @@ import { defineEventHandler } from 'h3'
 import { db } from '~/drizzle/db'
 import { songs, scheduleSongPool, users, votes } from '~/drizzle/schema'
 import { inArray, count } from 'drizzle-orm'
-import { requireSongAdmin } from '~~/server/utils/requireSongAdmin'
 
 export default defineEventHandler(async (event) => {
-  requireSongAdmin(event)
-
   const isSuperAdmin = event.context.user?.role === 'SUPER_ADMIN'
 
   const poolRows = await db.select().from(scheduleSongPool).orderBy(scheduleSongPool.createdAt)
@@ -63,7 +60,7 @@ export default defineEventHandler(async (event) => {
       requesterGrade: requesterUser?.grade || null,
       requesterClass: requesterUser?.class || null,
       preferredPlayTimeId: song.preferredPlayTimeId,
-      // 期望播出日期：自动排期时该歌曲只在对应日期参与排期
+      // 期望播出日期：自动排期的软偏好，命中当天时提高入选概率，不过滤候选
       preferredPlayDate: song.preferredPlayDate,
       cover: song.cover,
       semester: song.semester,

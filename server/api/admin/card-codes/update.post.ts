@@ -4,15 +4,10 @@ import { cardCodes, cardCodeRedeemLogs } from '~/drizzle/schema'
 import { inArray, eq } from 'drizzle-orm'
 import { syncAssignmentOnManualStatusChange, assertCardCodesUnbound } from '~~/server/services/cardCodeAssignmentService'
 import { CARD_CODE_STATUSES } from '../../../card-codes/statuses'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
   const user = event.context.user
-  if (!user) {
-    throw createError({ statusCode: 401, message: '未授权访问' })
-  }
-  if (!['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({ statusCode: 403, message: '权限不足' })
-  }
 
   const body = await readBody(event) ?? {}
   const ids = Array.isArray(body.ids) ? body.ids : body.id ? [body.id] : []
@@ -128,6 +123,17 @@ export default defineEventHandler(async (event) => {
       }
 
       return updatedRows
+    })
+
+    await recordAdminAudit(event, 'card-code.batch-update', {
+      targetType: 'card-code',
+      targetId: `batch:${res.length}`,
+      summary: {
+        status,
+        requested: normalizedIds.length,
+        updated: res.length,
+        noteUpdated: typeof body.note !== 'undefined'
+      }
     })
 
     return { success: true, data: res }

@@ -2,17 +2,9 @@ import { createError, defineEventHandler, getRouterParam, readBody } from 'h3'
 import { db } from '~/drizzle/db'
 import { songBlacklists } from '~/drizzle/schema'
 import { eq } from 'drizzle-orm'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
-  // 检查认证和权限
-  const user = event.context.user
-  if (!user || !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '需要管理员权限'
-    })
-  }
-
   const id = parseInt(getRouterParam(event, 'id'))
   if (!id) {
     throw createError({
@@ -53,6 +45,17 @@ export default defineEventHandler(async (event) => {
       .set(updateData)
       .where(eq(songBlacklists.id, id))
       .returning()
+
+    await recordAdminAudit(event, 'blacklist.update', {
+      targetType: 'blacklist',
+      targetId: id,
+      summary: {
+        type: existingItemResult[0]?.type,
+        value: existingItemResult[0]?.value,
+        isActive: typeof isActive === 'boolean' ? isActive : undefined,
+        reasonUpdated: reason !== undefined
+      }
+    })
 
     return {
       success: true,

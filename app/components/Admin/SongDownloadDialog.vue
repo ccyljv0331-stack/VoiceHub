@@ -367,9 +367,23 @@
                   >
                     <div class="flex items-center gap-2">
                       <p class="text-xs font-bold text-text-secondary truncate">{{ song.song.title }}</p>
+                      <!-- 预下载实测时长与系统记录不一致标记 -->
+                      <div
+                        v-if="isPreloadDurationMismatch(song.song)"
+                        class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-error-10 border border-error-20"
+                        :title="getDurationMismatchTip(song.song)"
+                      >
+                        <AlertTriangle class="w-2 h-2 text-error" />
+                        <span class="text-[9px] font-mono text-error">{{
+                          formatDuration(getPreloadedDuration(song.song.id))
+                        }}</span>
+                        <span class="text-[9px] font-mono text-text-tertiary"
+                          >≠ {{ formatDuration(song.song.durationSeconds) }}</span
+                        >
+                      </div>
                       <!-- 预下载标记（精确时长） -->
                       <div
-                        v-if="getUsablePreload(song.song.id, selectedQuality)"
+                        v-else-if="getUsablePreload(song.song.id, selectedQuality)"
                         class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-10 border border-success-20"
                       >
                         <Check class="w-2 h-2 text-success" />
@@ -546,6 +560,7 @@
 import { computed, ref, watch, reactive, onUnmounted } from 'vue'
 import { useAudioQuality } from '~/composables/useAudioQuality'
 import { getMusicUrlResult } from '~/utils/musicUrl'
+import { isPreviewClipDuration, probeAudioDuration } from '~/utils/preview-duration'
 import { persistQqMusicCookie } from '~/utils/qqCookie'
 import { useLocale } from '~/utils/locale'
 import AppSpinner from '~/components/UI/Common/AppSpinner.vue'
@@ -654,6 +669,8 @@ const ESTIMATE_DURATION_CONCURRENCY = 3
 const DOWNLOAD_URL_RETRY_LIMIT = 3
 const AUDIO_METADATA_TIMEOUT_MS = 10000
 const NETEASE_PREVIEW_DURATION_SECONDS = 30
+// 系统记录时长取自音源元数据且向下取整，与音频实际解码时长存在秒级正常偏差
+const PRELOAD_DURATION_TOLERANCE_SECONDS = 3
 const PCM_BYTES_PER_SECOND = 44100 * 2 * 4
 const FAST_MERGE_MIN_BUDGET_BYTES = 96 * 1024 * 1024
 const FAST_MERGE_MEMORY_RATIO = 0.04
@@ -716,6 +733,8 @@ const getDownloadResolveOptions = (song, quality, excludeSources = [], ignorePro
     unblock: isPodcast ? false : undefined,
     // 下载要在浏览器里 fetch 文件体，插件直链多为跨域 CDN，强制走服务端媒体代理
     preferProxy: true,
+    // 下载只接受完整版，解析链路无完整版时直接抛错而不兜底试听
+    strictComplete: true,
     quality,
     mediaId:
       song?.sourceInfo?.strMediaMid ||
@@ -765,10 +784,18 @@ const ensureQqVipFlag = async () => {
 }
 
 const isRetryableDownloadError = (error) => {
+  if (error?.code === 'PREVIEW_DURATION') return true
   const message = String(error?.message || error || '')
   return /404|not found|failed to fetch|networkerror|http( error|\s+\d+)|疑似试听时长|无法从播放链接获取时长|无法获取音乐播放链接/i.test(
     message
   )
+}
+
+// 试听片段错误：附带固定码，重试判定不受界面语言影响
+const createPreviewDurationError = () => {
+  const error = new Error(locale.value.previewDurationDetected)
+  error.code = 'PREVIEW_DURATION'
+  return error
 }
 
 const requestMusicUrlCandidate = async (song, quality, excludeSources, ignoreProvidedUrl) => {
@@ -874,51 +901,31 @@ const formatDuration = (seconds) => {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-const readAudioMetadataDuration = (src, options = {}) => {
-  if (!src) return Promise.resolve(0)
-
-  const timeoutMs = options.timeoutMs || AUDIO_METADATA_TIMEOUT_MS
-  const revokeObjectUrl = options.revokeObjectUrl || false
-
-  return new Promise((resolve) => {
-    const audio = new Audio()
-    let settled = false
-    let timeoutId = null
-
-    const cleanup = () => {
-      audio.onloadedmetadata = null
-      audio.onerror = null
-      audio.src = ''
-      audio.load()
-      if (revokeObjectUrl) {
-        URL.revokeObjectURL(src)
-      }
-    }
-
-    const finish = (duration = 0) => {
-      if (settled) return
-      settled = true
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
-      cleanup()
-      resolve(duration)
-    }
-
-    timeoutId = setTimeout(() => finish(0), timeoutMs)
-    audio.preload = 'metadata'
-    audio.onloadedmetadata = () => finish(audio.duration)
-    audio.onerror = () => finish(0)
-    audio.src = src
-  })
-}
-
 const getUsablePreload = (songId, quality) => {
   const cached = preloadedSongs.get(songId)
   if (!cached || cached.loading || !cached.blob) return null
   if (cached.quality !== undefined && cached.quality !== quality) return null
   return cached
 }
+
+const getPreloadedDuration = (songId) =>
+  getUsablePreload(songId, selectedQuality.value)?.duration || 0
+
+// 预下载实测时长与系统记录时长偏差超出容差时标记为不一致
+const isPreloadDurationMismatch = (song) => {
+  const recorded = Math.floor(Number(song?.durationSeconds) || 0)
+  const measured = Math.floor(Number(getPreloadedDuration(song?.id)) || 0)
+  if (recorded <= 0 || measured <= 0) return false
+  return Math.abs(measured - recorded) > PRELOAD_DURATION_TOLERANCE_SECONDS
+}
+
+const getDurationMismatchTip = (song) =>
+  getLocaleText(
+    'durationMismatchTip',
+    '',
+    formatDuration(getPreloadedDuration(song?.id)),
+    formatDuration(song?.durationSeconds)
+  )
 
 // 预下载单首歌曲
 const preloadSong = async (song) => {
@@ -957,7 +964,13 @@ const preloadSong = async (song) => {
       const contentType = response.headers.get('content-type') || 'audio/mpeg'
       const blob = new Blob(chunks, { type: contentType })
       const objectUrl = URL.createObjectURL(blob)
-      const duration = await readAudioMetadataDuration(objectUrl, { revokeObjectUrl: true })
+      const duration = await probeAudioDuration(objectUrl, AUDIO_METADATA_TIMEOUT_MS)
+      URL.revokeObjectURL(objectUrl)
+      if (duration < 0) throw new Error(locale.value.durationFromPlaybackUrlFailed)
+      // 试听片段不进预下载缓存，抛可重试错误让兜底链换源
+      if (isPreviewClipDuration(duration, song.durationSeconds)) {
+        throw createPreviewDurationError()
+      }
 
       return {
         blob,
@@ -1016,6 +1029,14 @@ const preloadSelectedSongs = async () => {
   }
 
   await Promise.all(workers)
+
+  const mismatchCount = songsToLoad.filter((item) => isPreloadDurationMismatch(item.song)).length
+  if (mismatchCount > 0 && window.$showNotification) {
+    window.$showNotification(
+      getLocaleText('preloadDurationMismatchCount', '', mismatchCount),
+      'warning'
+    )
+  }
 }
 
 const removePreloaded = (songId) => {
@@ -1104,7 +1125,7 @@ const estimateSelectedDurations = async () => {
             songItem.song,
             selectedQuality.value,
             async (candidate) => {
-              const duration = await readAudioMetadataDuration(candidate.url)
+              const duration = await probeAudioDuration(candidate.url, AUDIO_METADATA_TIMEOUT_MS)
 
               if (!duration || duration <= 0) {
                 throw new Error(locale.value.durationFromPlaybackUrlFailed)
@@ -1115,7 +1136,7 @@ const estimateSelectedDurations = async () => {
                 isNeteaseSong(songItem.song) &&
                 durationSeconds === NETEASE_PREVIEW_DURATION_SECONDS
               ) {
-                throw new Error(locale.value.previewDurationDetected)
+                throw createPreviewDurationError()
               }
 
               return {
@@ -1342,6 +1363,14 @@ const getAudioBlobForSong = async (song, quality) => {
   return await withDownloadSourceFallback(song, quality, async (candidate) => {
     processingStatus.value = getLocaleText('downloadingTitle', '', song.title)
     const blob = await fetchAudioWithProgress(candidate.url, song.id, song.title)
+    // 下载永不保存试听片段：实测时长命中后抛可重试错误换源
+    const objectUrl = URL.createObjectURL(blob)
+    const duration = await probeAudioDuration(objectUrl, AUDIO_METADATA_TIMEOUT_MS)
+    URL.revokeObjectURL(objectUrl)
+    if (duration < 0) throw new Error(locale.value.durationFromPlaybackUrlFailed)
+    if (isPreviewClipDuration(duration, song.durationSeconds)) {
+      throw createPreviewDurationError()
+    }
     return {
       blob,
       sourceUrl: candidate.url,

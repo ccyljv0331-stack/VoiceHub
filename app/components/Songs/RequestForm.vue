@@ -141,7 +141,7 @@
           >
             <!-- 超级管理员提示 -->
             <div
-              v-if="user && (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN')"
+              v-if="canBypassLimits"
               class="admin-notice-horizontal"
             >
               <span class="admin-icon">👑</span>
@@ -547,7 +547,7 @@
 
                         <!-- 管理员或未开启重复投稿限制时可直接重复投稿；否则普通用户仅可申请重播已播放歌曲。 -->
                         <button
-                          v-if="auth.isAdmin.value || (siteConfigLoaded && !enableSubmissionRestriction)"
+                          v-if="canBypassLimits || (siteConfigLoaded && !enableSubmissionRestriction)"
                           :disabled="
                             !canSubmitFromSearch ||
                             isSongBlockedByRestriction(result) ||
@@ -1218,6 +1218,7 @@ import { useAudioPlayer } from '~/composables/useAudioPlayer'
 import { useAudioPlayerControl } from '~/composables/useAudioPlayerControl'
 import { useSiteConfig } from '~/composables/useSiteConfig'
 import { useAuth } from '~/composables/useAuth'
+import { usePermissions } from '~/composables/usePermissions'
 import { useSemesters } from '~/composables/useSemesters'
 import { useMusicSources } from '~/composables/useMusicSources'
 import { useAudioQuality } from '~/composables/useAudioQuality'
@@ -1282,6 +1283,8 @@ const renderedGuidelines = computed(() => renderMarkdown(submissionGuidelines.va
 
 // 用户认证
 const auth = useAuth()
+const { can } = usePermissions()
+const canBypassLimits = computed(() => can('songs:bypass-limits'))
 const user = computed(() => auth.user.value)
 
 // 学期管理
@@ -1609,6 +1612,21 @@ let audioMatchRecorderNode = null
 let audioMatchMicStream = null
 let audioMatchMicSourceNode = null
 let audioMatchSilentNode = null
+let audioMatchSessionId = 0
+let audioMatchRecordingId = 0
+let audioMatchRecordingTimer = null
+let audioMatchRequest = null
+
+const waitForAudioMatch = async (promise, message, timeout = 15000) => {
+  let timer
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeout)
+    })])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 // 音源管理器
 const musicSources = useMusicSources()
@@ -1656,6 +1674,12 @@ const resetAudioMatchState = () => {
 }
 
 const stopAudioMatchSession = async () => {
+  audioMatchSessionId++
+  audioMatchRecordingId++
+  clearTimeout(audioMatchRecordingTimer)
+  audioMatchRequest?.abort()
+  audioMatchRequest = null
+  audioMatchPreparing.value = false
   audioMatchRecording.value = false
   audioMatchProcessing.value = false
 
@@ -1672,31 +1696,38 @@ const stopAudioMatchSession = async () => {
   audioMatchRecorderNode = null
   audioMatchSilentNode = null
 
-  if (audioMatchContext) {
+  const context = audioMatchContext
+  audioMatchContext = null
+  if (context) {
     try {
-      await audioMatchContext.close()
+      await waitForAudioMatch(context.close(), locale.value.audioMatchInitFailed)
     } catch {
-      // ignore close failures
+      // 上下文可能已由浏览器关闭
     }
-    audioMatchContext = null
   }
 }
 
-const loadAudioMatchScript = (src) =>
-  new Promise((resolve, reject) => {
-    if (document.querySelector(`script[data-audio-match="${src}"]`)) {
-      resolve()
-      return
-    }
-
-    const script = document.createElement('script')
-    script.src = src
-    script.async = true
-    script.dataset.audioMatch = src
-    script.onload = () => resolve()
+const loadAudioMatchScript = (src) => {
+  const existing = document.querySelector('script[data-audio-match="' + src + '"]')
+  if (existing?.audioMatchPromise) return existing.audioMatchPromise
+  existing?.remove()
+  const script = document.createElement('script')
+  script.src = src
+  script.async = true
+  script.dataset.audioMatch = src
+  script.audioMatchPromise = waitForAudioMatch(new Promise((resolve, reject) => {
+    script.onload = resolve
     script.onerror = () => reject(new Error(callLocale('audioMatchScriptLoadFailed', '', src)))
-    document.head.appendChild(script)
+  }), locale.value.audioMatchInitFailed).catch((err) => {
+    script.remove()
+    throw err
+  }).finally(() => {
+    script.onload = null
+    script.onerror = null
   })
+  document.head.appendChild(script)
+  return script.audioMatchPromise
+}
 
 const ensureAudioMatchScripts = async () => {
   if (!import.meta.client) return
@@ -1748,60 +1779,153 @@ const parseAudioMatchResults = (response) => {
   })
 }
 
-const handleAudioMatchFingerprint = async (recording) => {
+const handleAudioMatchFingerprint = async (recording, recordingId = audioMatchRecordingId) => {
+  const sessionId = audioMatchSessionId
+  if (!audioMatchContext || recordingId !== audioMatchRecordingId) return
+  clearTimeout(audioMatchRecordingTimer)
+  const request = new AbortController()
+  audioMatchRequest = request
+  const sampleRate = audioMatchContext.sampleRate
   try {
     audioMatchProcessing.value = true
     audioMatchStatus.value = locale.value.audioMatchGenerating
 
-    const fingerprint = await window.GenerateFP(recording)
-    const response = await $fetch('/api/api-enhanced/netease/audio/match', {
+    // 指纹引擎要求单声道 8kHz，实时采集保留设备默认采样率。
+    let pcm = recording
+    if (sampleRate !== 8000) {
+      const OfflineContextClass = window.OfflineAudioContext || window.webkitOfflineAudioContext
+      const offlineContext = new OfflineContextClass(
+        1,
+        Math.round((recording.length * 8000) / sampleRate),
+        8000
+      )
+      const buffer = offlineContext.createBuffer(1, recording.length, sampleRate)
+      buffer.getChannelData(0).set(recording)
+      const source = offlineContext.createBufferSource()
+      source.buffer = buffer
+      source.connect(offlineContext.destination)
+      source.start()
+      pcm = (await waitForAudioMatch(offlineContext.startRendering(), locale.value.audioMatchFailed)).getChannelData(0)
+    }
+
+    if (sessionId !== audioMatchSessionId || recordingId !== audioMatchRecordingId) return
+    const fingerprint = await waitForAudioMatch(window.GenerateFP(pcm), locale.value.audioMatchFailed)
+    if (sessionId !== audioMatchSessionId || recordingId !== audioMatchRecordingId) return
+    const response = await waitForAudioMatch($fetch('/api/api-enhanced/netease/audio/match', {
       method: 'POST',
+      signal: request.signal,
+      timeout: 20000,
+      retry: 0,
       body: {
         duration: AUDIO_MATCH_DURATION,
         audioFP: fingerprint
       }
-    })
+    }), locale.value.audioMatchFailed, 20000)
 
+    if (sessionId !== audioMatchSessionId || recordingId !== audioMatchRecordingId) return
     const matches = parseAudioMatchResults(response)
     if (!matches.length) {
-      throw new Error(locale.value.audioMatchNoMatch)
+      audioMatchError.value = locale.value.audioMatchNoMatch
+      audioMatchStatus.value = ''
+      return
     }
 
     audioMatchResults.value = matches
     audioMatchStatus.value = callLocale('audioMatchDone', '', matches.length)
   } catch (err) {
+    if (sessionId !== audioMatchSessionId || recordingId !== audioMatchRecordingId) return
     console.error('听歌识曲失败:', err)
-    audioMatchError.value = err?.message || locale.value.audioMatchFailed
+    audioMatchError.value = localizeServerError(err, locale.value.audioMatchFailed)
     audioMatchStatus.value = ''
     audioMatchResults.value = []
   } finally {
-    audioMatchProcessing.value = false
+    request.abort()
+    if (audioMatchRequest === request) audioMatchRequest = null
+    if (sessionId === audioMatchSessionId && recordingId === audioMatchRecordingId) audioMatchProcessing.value = false
   }
 }
 
 const initializeAudioMatch = async () => {
-  await ensureAudioMatchScripts()
-  await stopAudioMatchSession()
-
+  const cleanup = stopAudioMatchSession()
+  const sessionId = audioMatchSessionId
   audioMatchPreparing.value = true
   audioMatchStatus.value = locale.value.microphoneRequesting
+  let microphoneTimeout
 
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext
-    audioMatchContext = new AudioContextClass({ sampleRate: 8000 })
-    if (audioMatchContext.state === 'suspended') {
-      await audioMatchContext.resume()
-    }
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (!AudioContextClass || !navigator.mediaDevices?.getUserMedia) {
       throw new Error(locale.value.microphoneUnsupported)
     }
 
-    if (audioMatchContext.audioWorklet) {
-      await audioMatchContext.audioWorklet.addModule('/audio-match/rec.js')
-      audioMatchRecorderNode = new AudioWorkletNode(audioMatchContext, 'timed-recorder')
+    // 在点击事件中立即请求授权和恢复上下文，避免资源加载消耗用户激活状态。
+    const microphone = new Promise((resolve, reject) => {
+      let timedOut = false
+      microphoneTimeout = setTimeout(() => {
+        timedOut = true
+        reject(new Error(locale.value.microphoneTimeout))
+      }, 15000)
+      navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            echoCancellation: false,
+            autoGainControl: false,
+            noiseSuppression: false
+          }
+        })
+        .then((stream) => {
+          clearTimeout(microphoneTimeout)
+          if (timedOut || sessionId !== audioMatchSessionId) {
+            stream.getTracks().forEach((track) => track.stop())
+            resolve(null)
+            return
+          }
+          audioMatchMicStream = stream
+          for (const track of stream.getTracks()) {
+            track.addEventListener?.('ended', () => {
+              if (sessionId !== audioMatchSessionId) return
+              stopAudioMatchSession()
+              audioMatchStatus.value = ''
+              audioMatchError.value = locale.value.microphoneNotFound
+            }, { once: true })
+          }
+          resolve(stream)
+        }, reject)
+    })
+
+    const [stream, context] = await Promise.all([
+      microphone,
+      (async () => {
+        const context = new AudioContextClass()
+        audioMatchContext = context
+        if (context.state === 'suspended') {
+          try {
+            await waitForAudioMatch(context.resume(), locale.value.audioMatchInitFailed)
+          } catch {
+            throw new Error(locale.value.audioMatchInitFailed)
+          }
+        }
+        return context
+      })(),
+      ensureAudioMatchScripts(),
+      cleanup
+    ])
+    if (sessionId !== audioMatchSessionId) return
+
+    if (context.audioWorklet) {
+      try {
+        await waitForAudioMatch(context.audioWorklet.addModule('/audio-match/rec.js'), locale.value.audioMatchInitFailed)
+        if (sessionId !== audioMatchSessionId) return
+        audioMatchRecorderNode = new AudioWorkletNode(context, 'timed-recorder')
+      } catch (err) {
+        if (sessionId !== audioMatchSessionId) return
+        if (!context.createScriptProcessor) throw err
+      }
+    }
+    if (audioMatchRecorderNode) {
 
       audioMatchRecorderNode.port.onmessage = async (event) => {
+        if (sessionId !== audioMatchSessionId || event.data.recordingId !== audioMatchRecordingId || !audioMatchRecording.value) return
         switch (event.data.message) {
           case 'bufferhealth': {
             const progress = Math.min(1, Number(event.data.health) || 0)
@@ -1816,7 +1940,7 @@ const initializeAudioMatch = async () => {
           }
           case 'finished':
             audioMatchRecording.value = false
-            await handleAudioMatchFingerprint(event.data.recording)
+            await handleAudioMatchFingerprint(event.data.recording, event.data.recordingId)
             break
           default:
             break
@@ -1825,15 +1949,16 @@ const initializeAudioMatch = async () => {
     } else {
       // 兼容不支持 AudioWorklet 的浏览器 (如旧版 Safari)
       const bufferSize = 4096
-      const scriptNode = audioMatchContext.createScriptProcessor(bufferSize, 1, 1)
+      const scriptNode = context.createScriptProcessor(bufferSize, 1, 1)
 
       let maxLength = 0
       let recbuffer = new Float32Array()
       let recording = false
       let bufIndex = 0
+      let recordingId = 0
 
       scriptNode.onaudioprocess = (e) => {
-        if (!recording) return
+        if (!recording || sessionId !== audioMatchSessionId || recordingId !== audioMatchRecordingId) return
 
         const channelL = e.inputBuffer.getChannelData(0)
         const progress = bufIndex / maxLength
@@ -1849,7 +1974,7 @@ const initializeAudioMatch = async () => {
           )
         }
 
-        if (bufIndex + channelL.length > maxLength) {
+        if (bufIndex + channelL.length >= maxLength) {
           recording = false
           audioMatchRecording.value = false
 
@@ -1860,7 +1985,7 @@ const initializeAudioMatch = async () => {
           }
 
           bufIndex = 0
-          handleAudioMatchFingerprint(recbuffer)
+          handleAudioMatchFingerprint(recbuffer, recordingId)
         } else {
           recbuffer.set(channelL, bufIndex)
           bufIndex += channelL.length
@@ -1872,51 +1997,59 @@ const initializeAudioMatch = async () => {
       audioMatchRecorderNode.port = {
         postMessage: (msg) => {
           if (msg.message === 'start') {
-            maxLength = msg.duration * 8000
+            recordingId = msg.recordingId
+            maxLength = Math.round(msg.duration * context.sampleRate)
             recbuffer = new Float32Array(maxLength)
             bufIndex = 0
             recording = true
+          } else if (msg.message === 'stop') {
+            recording = false
           }
         }
       }
     }
 
-    audioMatchSilentNode = audioMatchContext.createGain()
+    audioMatchSilentNode = context.createGain()
     audioMatchSilentNode.gain.value = 0
     audioMatchRecorderNode.connect(audioMatchSilentNode)
-    audioMatchSilentNode.connect(audioMatchContext.destination)
+    audioMatchSilentNode.connect(context.destination)
 
-    const GET_USER_MEDIA_TIMEOUT_MS = 15000
-
-    audioMatchMicStream = await Promise.race([
-      navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          autoGainControl: false,
-          noiseSuppression: false,
-          latency: 0
-        }
-      }),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error(locale.value.microphoneTimeout)),
-          GET_USER_MEDIA_TIMEOUT_MS
-        )
-      )
-    ])
-
-    audioMatchMicSourceNode = audioMatchContext.createMediaStreamSource(audioMatchMicStream)
+    audioMatchMicSourceNode = context.createMediaStreamSource(stream)
     audioMatchMicSourceNode.connect(audioMatchRecorderNode)
     audioMatchStatus.value = locale.value.microphoneReady
   } catch (err) {
-    await stopAudioMatchSession()
+    if (sessionId !== audioMatchSessionId) return
+    audioMatchStatus.value = ''
+    const cleanup = stopAudioMatchSession()
+    const failureSessionId = audioMatchSessionId
+    await cleanup
+    if (failureSessionId !== audioMatchSessionId) return
     throw err
   } finally {
-    audioMatchPreparing.value = false
+    clearTimeout(microphoneTimeout)
+    if (sessionId === audioMatchSessionId) audioMatchPreparing.value = false
+  }
+}
+
+const getAudioMatchErrorMessage = (err) => {
+  switch (err?.name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+    case 'SecurityError':
+      return locale.value.microphonePermissionDenied
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return locale.value.microphoneNotFound
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return locale.value.microphoneBusy
+    default:
+      return localizeServerError(err, locale.value.audioMatchInitFailed)
   }
 }
 
 const openAudioMatchModal = async () => {
+  if (showAudioMatchModal.value) return
   showAudioMatchModal.value = true
   resetAudioMatchState()
 
@@ -1924,7 +2057,7 @@ const openAudioMatchModal = async () => {
     await initializeAudioMatch()
   } catch (err) {
     console.error('初始化听歌识曲失败:', err)
-    audioMatchError.value = err?.message || locale.value.audioMatchInitFailed
+    audioMatchError.value = getAudioMatchErrorMessage(err)
   }
 }
 
@@ -1964,14 +2097,34 @@ const startAudioMatchRecording = async () => {
   audioMatchResults.value = []
 
   if (!audioMatchRecorderNode) {
+    const initialization = initializeAudioMatch()
+    const sessionId = audioMatchSessionId
     try {
-      await initializeAudioMatch()
+      await initialization
+      if (sessionId !== audioMatchSessionId) return
     } catch (err) {
       console.error('重新初始化听歌识曲失败:', err)
-      audioMatchError.value = err?.message || locale.value.microphoneAccessFailed
+      audioMatchError.value = getAudioMatchErrorMessage(err)
       return
     }
   }
+
+  const context = audioMatchContext
+  if (!context || !audioMatchRecorderNode || !showAudioMatchModal.value) return
+  if (context.state === 'suspended') {
+    try {
+      audioMatchPreparing.value = true
+      await waitForAudioMatch(context.resume(), locale.value.audioMatchInitFailed)
+    } catch {
+      if (context !== audioMatchContext) return
+      audioMatchStatus.value = ''
+      audioMatchError.value = locale.value.audioMatchInitFailed
+      return
+    } finally {
+      if (context === audioMatchContext) audioMatchPreparing.value = false
+    }
+  }
+  if (context !== audioMatchContext) return
 
   audioMatchStatus.value = callLocale(
     'audioMatchRecordingProgress',
@@ -1982,14 +2135,25 @@ const startAudioMatchRecording = async () => {
   audioMatchRecording.value = true
   audioMatchRecorderNode.port.postMessage({
     message: 'start',
+    recordingId: ++audioMatchRecordingId,
     duration: AUDIO_MATCH_DURATION
   })
+  audioMatchRecordingTimer = setTimeout(() => {
+    if (context !== audioMatchContext || !audioMatchRecording.value) return
+    stopAudioMatchRecording()
+    audioMatchStatus.value = ''
+    audioMatchError.value = locale.value.microphoneBusy
+  }, (AUDIO_MATCH_DURATION + 5) * 1000)
 }
 
 const stopAudioMatchRecording = () => {
+  audioMatchRecordingId++
+  clearTimeout(audioMatchRecordingTimer)
   if (audioMatchRecorderNode?.port) {
     audioMatchRecorderNode.port.postMessage({ message: 'stop' })
   }
+  audioMatchRecording.value = false
+  audioMatchStatus.value = locale.value.microphoneReady
 }
 
 const useAudioMatchResult = async (match) => {
@@ -3562,7 +3726,7 @@ const submitSong = async (result, options = {}) => {
   // 重播申请需要定位到本学期内已播放的原歌曲；多P 视频按完整 musicId 精确匹配，其余平台由 getSimilarSong 归一化回退
   if (
     options.replayRequest === true &&
-    !auth.isAdmin.value &&
+    !canBypassLimits.value &&
     auth.isAuthenticated.value &&
     songService.songs.value &&
     songService.songs.value.length > 0 &&
@@ -3586,7 +3750,7 @@ const submitSong = async (result, options = {}) => {
   }
 
   // 能否投稿由服务端预检结论决定（区分本学期查重与排期冷却窗口两种模式，且已随开关关闭放行）
-  if (!auth.isAdmin.value && isSongBlockedByRestriction(result)) {
+  if (!canBypassLimits.value && isSongBlockedByRestriction(result)) {
     if (window.$showNotification) {
       window.$showNotification(getRestrictionMessage(getRestrictionReason(result)), 'warning')
     }
@@ -3676,7 +3840,7 @@ const submitSong = async (result, options = {}) => {
   }
 
   // 管理员不受黑名单限制
-  if (!auth.isAdmin.value) {
+  if (!canBypassLimits.value) {
     try {
       // 检查黑名单
       const blacklistCheck = await $fetch('/api/blacklist/check', {
@@ -4177,7 +4341,7 @@ const handleManualSubmit = async (fromSlotModal = false) => {
   error.value = ''
 
   // 管理员不受黑名单限制
-  if (!auth.isAdmin.value) {
+  if (!canBypassLimits.value) {
     try {
       // 检查黑名单
       const blacklistCheck = await $fetch('/api/blacklist/check', {
@@ -4302,7 +4466,7 @@ const fetchSubmissionStatus = async () => {
 // 检查投稿限额
 const checkSubmissionLimit = () => {
   // 超级管理员不受投稿限制
-  if (user.value && (user.value.role === 'SUPER_ADMIN' || user.value.role === 'ADMIN')) {
+  if (canBypassLimits.value) {
     return { canSubmit: true, message: '' }
   }
 
@@ -4446,7 +4610,7 @@ const canSubmitFromSearch = computed(() => {
 })
 
 const isSongBlockedByRestriction = (result) => {
-  if (auth.isAdmin.value) return false
+  if (canBypassLimits.value) return false
   if (restrictionChecking.value) return false
   const songTitle = result.song || result.title
   const songArtist = result.singer || result.artist

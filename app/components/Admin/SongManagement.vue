@@ -42,18 +42,18 @@
               class="hidden sm:flex flex-row items-center gap-2 p-1.5 bg-bg-secondary-90 border border-border-secondary rounded-lg backdrop-blur-xl shadow-2xl"
             >
               <button
-                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-success text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest"
+                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-success text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                 @click="batchMarkPlayed"
-                :disabled="loading || batchMarking"
+                :disabled="(loading || batchMarking) || !can('songs:write')"
               >
                 <Check :size="14" class="text-success-70" /> {{ locale.actions.batchMarkPlayed }} ({{
                   selectedSongs.length
                 }})
               </button>
               <button
-                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-text-tertiary hover:text-text-primary text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest"
+                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-text-tertiary hover:text-text-primary text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                 @click="batchMarkUnplayed"
-                :disabled="loading || batchMarking"
+                :disabled="(loading || batchMarking) || !can('songs:write')"
               >
                 <RotateCcw :size="14" /> {{ locale.actions.batchMarkUnplayed }} ({{ selectedSongs.length }})
               </button>
@@ -81,14 +81,14 @@
                   selectedSongs.length
                 }})
               </button>
-              <button
-                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-warning text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest"
+              <button :disabled="!can('songs:review')"
+                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-warning text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                 @click="batchReject"
               >
                 <X :size="14" /> {{ locale.actions.batchReject }} ({{ selectedSongs.length }})
               </button>
-              <button
-                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-error text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest"
+              <button :disabled="!can('songs:delete')"
+                class="flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-quaternary text-error text-[11px] font-black rounded-lg border border-border-tertiary-50 transition-all active:scale-95 uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                 @click="batchDelete"
               >
                 <Trash2 :size="14" class="text-error-70" /> {{ locale.actions.delete }} ({{ selectedSongs.length }})
@@ -104,8 +104,8 @@
             {{ locale.actions.duplicate }}
             <span v-if="duplicateGroups.length" class="text-primary">({{ duplicateGroups.length }})</span>
           </button>
-          <button
-            class="flex items-center gap-2 px-5 py-2.5 bg-bg-secondary border border-border-secondary hover:border-border-tertiary text-text-secondary text-xs font-bold rounded-lg transition-all active:scale-95"
+          <button :disabled="!can('songs:write')"
+            class="flex items-center gap-2 px-5 py-2.5 bg-bg-secondary border border-border-secondary hover:border-border-tertiary text-text-secondary text-xs font-bold rounded-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             @click="openAddSongModal"
           >
             <Plus :size="16" /> {{ locale.actions.addManual }}
@@ -432,25 +432,25 @@
             <div
               class="col-span-12 lg:col-span-2 flex items-center justify-end gap-1 lg:gap-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-all shrink-0 ml-auto"
             >
-              <button
-                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-primary hover:bg-primary-hover hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30"
+              <button :disabled="!can('songs:write')"
+                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-primary hover:bg-primary-hover hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed"
                 :title="locale.actions.edit"
                 @click="editSong(song)"
               >
                 <Edit2 :size="14" />
               </button>
 
-              <button
+              <button :disabled="!can('songs:write')"
                 v-if="!song.played"
-                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-success hover:bg-success hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30"
+                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-success hover:bg-success hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed"
                 :title="locale.actions.markPlayed"
                 @click="markAsPlayed(song.id)"
               >
                 <Check :size="14" />
               </button>
-              <button
+              <button :disabled="!can('songs:write')"
                 v-else
-                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-text-tertiary hover:bg-bg-quaternary hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30"
+                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-text-tertiary hover:bg-bg-quaternary hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed"
                 :title="locale.actions.markUnplayed"
                 @click="markAsUnplayed(song.id)"
               >
@@ -459,7 +459,7 @@
 
               <button
                 v-if="isAdmin"
-                :disabled="poolPendingIds.has(song.id)"
+                :disabled="(poolPendingIds.has(song.id)) || !can('schedule:write')"
                 :class="[
                   'flex items-center justify-center p-2 rounded-xl transition-all border',
                   song.inPool
@@ -475,15 +475,15 @@
                 <FolderPlus v-else :size="14" />
               </button>
 
-              <button
-                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-warning hover:bg-warning hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30"
+              <button :disabled="!can('songs:review')"
+                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-warning hover:bg-warning hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed"
                 :title="locale.actions.reject"
                 @click="rejectSong(song.id)"
               >
                 <X :size="14" />
               </button>
-              <button
-                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-error hover:bg-error hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30"
+              <button :disabled="!can('songs:delete')"
+                class="flex items-center justify-center p-2 bg-bg-tertiary-50 text-error hover:bg-error hover:text-text-primary rounded-xl transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed"
                 :title="locale.actions.deleteSong"
                 @click="deleteSong(song.id)"
               >
@@ -529,15 +529,15 @@
               <Download :size="16" class="mb-1" />
               <span class="text-[9px] font-bold">{{ locale.actions.download }}</span>
             </button>
-            <button
-              class="flex flex-col items-center justify-center w-14 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-warning rounded-xl border border-border-tertiary-50 transition-all active:scale-95"
+            <button :disabled="!can('songs:review')"
+              class="flex flex-col items-center justify-center w-14 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-warning rounded-xl border border-border-tertiary-50 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               @click="batchReject"
             >
               <X :size="16" class="mb-1" />
               <span class="text-[9px] font-bold">{{ locale.actions.batchReject }}</span>
             </button>
-            <button
-              class="flex flex-col items-center justify-center w-14 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-error rounded-xl border border-border-tertiary-50 transition-all active:scale-95"
+            <button :disabled="!can('songs:delete')"
+              class="flex flex-col items-center justify-center w-14 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-error rounded-xl border border-border-tertiary-50 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               @click="batchDelete"
             >
               <Trash2 :size="16" class="mb-1" />
@@ -548,17 +548,17 @@
         <!-- 批量播放状态 -->
         <div class="flex items-center gap-2 border-t border-border-secondary-50 pt-2">
           <button
-            class="flex-1 flex items-center justify-center gap-2 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-success rounded-xl border border-border-tertiary-50 transition-all active:scale-95"
+            class="flex-1 flex items-center justify-center gap-2 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-success rounded-xl border border-border-tertiary-50 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             @click="batchMarkPlayed"
-            :disabled="loading || batchMarking"
+            :disabled="(loading || batchMarking) || !can('songs:write')"
           >
             <Check :size="16" />
             <span class="text-[10px] font-bold">{{ locale.actions.batchMarkPlayed }}</span>
           </button>
           <button
-            class="flex-1 flex items-center justify-center gap-2 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-text-tertiary rounded-xl border border-border-tertiary-50 transition-all active:scale-95"
+            class="flex-1 flex items-center justify-center gap-2 h-12 bg-bg-tertiary hover:bg-bg-quaternary text-text-tertiary rounded-xl border border-border-tertiary-50 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             @click="batchMarkUnplayed"
-            :disabled="loading || batchMarking"
+            :disabled="(loading || batchMarking) || !can('songs:write')"
           >
             <RotateCcw :size="16" />
             <span class="text-[10px] font-bold">{{ locale.actions.batchMarkUnplayed }}</span>
@@ -689,7 +689,7 @@
               {{ locale.dialog.cancel }}
             </button>
             <button
-              :disabled="rejectLoading"
+              :disabled="(rejectLoading) || !can('songs:review')"
               class="px-8 py-2.5 bg-error hover:bg-error text-text-primary text-xs font-black rounded-lg transition-all disabled:opacity-50"
               @click="confirmReject"
             >
@@ -1091,10 +1091,10 @@
               <span class="text-[10px] font-black text-text-disabled uppercase tracking-widest px-1">
                 {{ locale.sourceReplace.sectionTitle }}
               </span>
-              <button
+              <button :disabled="!can('songs:write')"
                 v-if="showEditModal"
                 type="button"
-                class="flex items-center gap-2 px-4 py-2 bg-primary-10 hover:bg-primary-20 text-primary text-[11px] font-black rounded-lg border border-primary-20 transition-all active:scale-95"
+                class="flex items-center gap-2 px-4 py-2 bg-primary-10 hover:bg-primary-20 text-primary text-[11px] font-black rounded-lg border border-primary-20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 @click="openSourceReplaceModal"
               >
                 <ArrowLeftRight :size="14" />
@@ -1165,12 +1165,12 @@
                 />
                 <button
                   type="button"
-                  :disabled="
+                  :disabled="(
                     refreshDurationLoading ||
                     (showEditModal
                       ? !editForm.musicPlatform || !editForm.musicId
                       : !addForm.musicPlatform || !addForm.musicId)
-                  "
+                  ) || !can('songs:write')"
                   class="px-4 py-3 bg-bg-tertiary-50 hover:bg-bg-quaternary text-text-secondary text-xs font-bold rounded-lg transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5"
                   :title="locale.editModal.refreshDuration"
                   @click="refreshDurationInModal"
@@ -1205,12 +1205,12 @@
                 />
                 <button
                   type="button"
-                  :disabled="
+                  :disabled="(
                     refreshCoverLoading ||
                     (showEditModal
                       ? !editForm.musicPlatform || !editForm.musicId
                       : !addForm.musicPlatform || !addForm.musicId)
-                  "
+                  ) || !can('songs:write')"
                   class="px-4 py-3 bg-bg-tertiary-50 hover:bg-bg-quaternary text-text-secondary text-xs font-bold rounded-lg transition-all border border-border-tertiary-30 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5"
                   :title="locale.editModal.refreshCover"
                   @click="refreshCoverInModal"
@@ -1288,7 +1288,7 @@
               {{ locale.dialog.cancel }}
             </button>
             <button
-              :disabled="showEditModal ? editLoading : !canSubmitAddForm || addLoading"
+              :disabled="(showEditModal ? editLoading : !canSubmitAddForm || addLoading) || !can('songs:write')"
               class="px-8 py-2.5 bg-primary-hover hover:bg-primary text-text-primary text-xs font-black rounded-lg transition-all disabled:opacity-50"
               @click="showEditModal ? saveEditSong() : saveAddSong()"
             >
@@ -1310,6 +1310,7 @@
     <SongSourceReplaceModal
       :show="showSourceReplaceModal"
       :song="sourceReplaceSong"
+      allow-replace-title-artist
       @close="showSourceReplaceModal = false"
       @apply="applySourceReplacement"
     />
@@ -1317,6 +1318,7 @@
 </template>
 
 <script setup>
+import { usePermissions } from '~/composables/usePermissions'
 import { computed, onMounted, ref, watch, onUnmounted } from 'vue'
 import ConfirmDialog from '~/components/UI/ConfirmDialog.vue'
 import VotersModal from '~/components/Admin/VotersModal.vue'
@@ -1372,6 +1374,8 @@ import customParseFormat from 'dayjs/plugin/customParseFormat'
 dayjs.extend(customParseFormat)
 
 // 响应式数据
+const { can } = usePermissions()
+
 const { showToast: showNotification } = useToast()
 const { localize: localizeServerError } = useServerErrors()
 const { admin, siteConfig, songs: songsLocale, currentLocale } = useLocale()
@@ -1698,13 +1702,8 @@ const filteredSongs = computed(() => {
     )
   }
 
-  // 排序
+  // 排序：完全按所选排序方式，点歌券置顶只在排期管理的待排期列表生效
   filtered.sort((a, b) => {
-    // 使用点歌券的歌曲优先置顶，不随排序方式改变
-    const aCard = a.cardCodeId ? 1 : 0
-    const bCard = b.cardCodeId ? 1 : 0
-    if (aCard !== bCard) return bCard - aCard
-
     switch (sortOption.value) {
       case 'time-desc':
         return new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
@@ -2083,7 +2082,7 @@ const confirmPlaybackChange = async () => {
     const songIds = [...playbackConfirmSongIds.value]
     const updated = await executePlaybackChange(songIds, playbackConfirmMode.value === 'unplayed')
     if (updated === null) return
-    selectedSongs.value = songIds.filter((id) => songs.value.some((song) => song.id === id))
+    // 选中状态统一由 executePlaybackChange 内的 refreshSongs() 清空
     showNotification(
       updated > 0
         ? getNestedMessage(
@@ -2113,6 +2112,7 @@ const batchMarkUnplayed = () => openPlaybackConfirm(selectedSongs.value, 'unplay
 
 // 加入 / 移出备选池
 const toggleSongPool = async (song) => {
+  if (!can('schedule:write')) return
   if (poolPendingIds.value.has(song.id)) return
 
   poolPendingIds.value = new Set([...poolPendingIds.value, song.id])
@@ -2160,6 +2160,7 @@ const toggleSongPool = async (song) => {
 }
 
 const deleteSong = async (songId) => {
+  if (!can('songs:delete')) return
   const song = songs.value.find((s) => s.id === songId)
   if (!song) return
 
@@ -2185,6 +2186,7 @@ const deleteSong = async (songId) => {
 }
 
 const batchDelete = async () => {
+  if (!can('songs:delete')) return
   if (selectedSongs.value.length === 0) return
 
   deleteDialogTitle.value = getNestedMessage('dialog', 'batchDeleteTitle')
@@ -2260,6 +2262,7 @@ const confirmDelete = async () => {
 
 // 驳回歌曲
 const rejectSong = (songId) => {
+  if (!can('songs:review')) return
   const song = songs.value.find((s) => s.id === songId)
   if (!song) return
 
@@ -2278,6 +2281,7 @@ const rejectSong = (songId) => {
 
 // 批量驳回（复用单曲驳回对话框，batch 模式展示数量信息）
 const batchReject = () => {
+  if (!can('songs:review')) return
   if (selectedSongs.value.length === 0) return
 
   batchRejectIds.value = [...selectedSongs.value]
@@ -2295,6 +2299,7 @@ const batchReject = () => {
 
 // 确认驳回（单曲 / 批量共用对话框）
 const confirmReject = async () => {
+  if (!can('songs:review')) return
   if (!rejectReason.value.trim()) {
     showNotification(getNestedMessage('errors', 'rejectReasonRequired'), 'error')
     return
@@ -2375,6 +2380,7 @@ const cancelReject = () => {
 
 // 编辑歌曲
 const editSong = (song) => {
+  if (!can('songs:write')) return
   editForm.value = {
     id: song.id,
     title: song.title || '',
@@ -2430,6 +2436,7 @@ const editFromDuplicate = (song) => {
 }
 
 const openSourceReplaceModal = () => {
+  if (!can('songs:write')) return
   showSourceReplaceModal.value = true
 }
 
@@ -2439,6 +2446,9 @@ const applySourceReplacement = (payload) => {
   editForm.value.musicId = payload.musicId || ''
   if (payload.cover) editForm.value.cover = payload.cover
   if (payload.durationSeconds != null) editForm.value.durationSeconds = payload.durationSeconds
+  // 勾选时同步采用新音源的歌名与歌手
+  if (payload.title) editForm.value.title = payload.title
+  if (payload.artist) editForm.value.artist = payload.artist
   // 旧播放地址指向原音源，换源后必须清空避免继续使用旧链接
   editForm.value.playUrl = ''
   editSourceSelection.value = payload.selectionToken
@@ -2453,6 +2463,7 @@ const applySourceReplacement = (payload) => {
 }
 
 const saveEditSong = async () => {
+  if (!can('songs:write')) return
   if (!editForm.value.title || !editForm.value.artist) {
     showNotification(getNestedMessage('errors', 'songInfoRequired'), 'error')
     return
@@ -2542,6 +2553,7 @@ const saveEditSong = async () => {
 
 // 弹窗内刷新歌曲时长：换源后按新平台+音乐ID，否则编辑模式按 songId
 const refreshDurationInModal = async () => {
+  if (!can('songs:write')) return
   const isEdit = showEditModal.value
   const form = isEdit ? editForm.value : addForm.value
   if (!form.musicPlatform || !form.musicId) {
@@ -2584,6 +2596,7 @@ const refreshDurationInModal = async () => {
 
 // 弹窗内刷新歌曲封面：换源后按新平台+音乐ID，仅填入表单随弹窗保存
 const refreshCoverInModal = async () => {
+  if (!can('songs:write')) return
   const isEdit = showEditModal.value
   const form = isEdit ? editForm.value : addForm.value
   if (!form.musicPlatform || !form.musicId) {
@@ -2672,6 +2685,7 @@ const cancelClearSubmissionNote = () => {
 }
 
 const openAddSongModal = () => {
+  if (!can('songs:write')) return
   addForm.value = {
     title: '',
     artist: '',
@@ -2688,6 +2702,7 @@ const openAddSongModal = () => {
 }
 
 const saveAddSong = async () => {
+  if (!can('songs:write')) return
   if (!addForm.value.title || !addForm.value.artist) {
     showNotification(getNestedMessage('errors', 'songInfoRequired'), 'error')
     return
@@ -2813,14 +2828,13 @@ const searchUsersFromAPI = async (query) => {
   }
 
   try {
-    const response = await $fetch('/api/admin/users', {
+    const response = await $fetch('/api/admin/recipients', {
       method: 'GET',
       query: {
-        search: query,
-        limit: 20
+        q: query
       }
     })
-    return response.users || []
+    return response.data || []
   } catch (error) {
     console.error('搜索用户失败:', error)
     return []
@@ -2975,7 +2989,7 @@ watch([searchQuery, statusFilter, poolFilter, sortOption, selectedSemester, sele
 })
 
 // 生命周期
-const { semesters, fetchSemesters, semesterUpdateEvent } = useSemesters()
+const { semesters, fetchSemesterOptions: fetchSemesters, semesterUpdateEvent } = useSemesters()
 
 watch(semesterUpdateEvent, async () => {
   await fetchSemesters()

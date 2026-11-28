@@ -43,6 +43,8 @@ export const users = pgTable('User', {
   remark: text('remark'),
   legalConsentVersion: text('legal_consent_version'),
   legalConsentAt: timestamp('legal_consent_at'),
+  // 后台权限码：NULL 跟随角色模板；数组为显式授予，`!` 前缀为显式拒绝
+  permissions: jsonb('permissions').$type<string[] | null>(),
 }, (table) => [uniqueIndex('User_username_unique').on(table.username)]);
 
 // 登录会话表，id 与 JWT 的 jti 一致
@@ -269,13 +271,28 @@ export const astrbotBindingCodes = pgTable('AstrbotBindingCode', {
 }, (table) => [primaryKey({ columns: [table.userId, table.platform] }),
   uniqueIndex('AstrbotBindingCode_hash_unique').on(table.codeHash)]);
 
+// 绑定链接票据：由机器人在会话内发起，用户在浏览器确认后才落库为绑定。
+// consumedByUserId 记录确认账号，用于重试幂等（同一账号重复确认返回成功）。
+export const astrbotBindTickets = pgTable('AstrbotBindTicket', {
+  tokenHash: text('tokenHash').primaryKey(),
+  platform: text('platform').notNull(),
+  adapter: text('adapter').notNull(),
+  umo: text('umo').notNull(),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+  expiresAt: timestamp('expiresAt', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumedAt', { withTimezone: true }),
+  consumedByUserId: integer('consumedByUserId')
+}, (table) => [index('AstrbotBindTicket_expires_idx').on(table.expiresAt)]);
+
 // 每个用户每个平台一条绑定；适配器名与 UMO 实例名分离存储。
 export const astrbotBindings = pgTable('AstrbotBinding', {
   userId: integer('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   platform: text('platform').notNull(),
   adapter: text('adapter').notNull(),
   umo: text('umo').notNull(),
-  boundAt: timestamp('boundAt').defaultNow().notNull()
+  boundAt: timestamp('boundAt').defaultNow().notNull(),
+  // 仅由本人验证后授予，每次重新绑定使用不同标识。
+  passwordResetGrantId: uuid('passwordResetGrantId')
 }, (table) => [primaryKey({ columns: [table.userId, table.platform] }), uniqueIndex('AstrbotBinding_umo_unique').on(table.umo)]);
 
 // AstrBot 待投递队列：插件无法被 VoiceHub 访问（内网/NAT）时，由插件主动轮询取件。
@@ -476,6 +493,10 @@ export const systemSettings = pgTable('SystemSettings', {
   // 站点统计代码（任意站点统计平台的 HTML/JS 片段，注入 SSR 页面 <head>）
   statisticsCodeEnabled: boolean('statisticsCodeEnabled').default(false).notNull(),
   statisticsCode: text('statisticsCode'),
+
+  // 自定义 CSS（全站样式表，注入 SSR 页面 <head> 末尾，优先级高于内置主题）
+  customCssEnabled: boolean('customCssEnabled').default(false).notNull(),
+  customCss: text('customCss'),
   legalConsentEnabled: boolean('legalConsentEnabled').default(false).notNull(),
   legalConsentDisplayMode: text('legalConsentDisplayMode').default('modal').notNull(),
   legalConsentUpdatedDate: text('legalConsentUpdatedDate'),
@@ -487,6 +508,13 @@ export const systemSettings = pgTable('SystemSettings', {
   // 平台管理配置（仅内置音源；插件音源由插件管理的启用状态与排序控制，不入库）
   enabledPlatforms: text('enabledPlatforms').default('["netease","tencent","bilibili","migu"]'),
   platformOrder: text('platformOrder').default('["netease","tencent","bilibili","migu"]'),
+  // 角色权限模板：按角色存权限码数组，NULL 时使用 app/utils/admin-permissions 内置默认模板
+  rolePermissionTemplates: jsonb('rolePermissionTemplates').$type<Record<string, string[]> | null>(),
+
+  // 日志管理：API 访问日志记录级别（off / errors / all），两类数据库日志保留天数（0 = 永久保留）
+  apiLogLevel: text('apiLogLevel').default('all').notNull(),
+  apiLogRetentionDays: integer('apiLogRetentionDays').default(90).notNull(),
+  auditLogRetentionDays: integer('auditLogRetentionDays').default(180).notNull(),
 });
 
 // 歌曲黑名单表
@@ -541,6 +569,30 @@ export const apiLogs = pgTable('api_logs', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   errorMessage: text('error_message'),
 });
+
+// 管理员操作审计日志表（仅记录后台语义化写操作，控制记录量）
+export const adminAuditLogs = pgTable('admin_audit_logs', {
+  id: serial('id').primaryKey(),
+  // 审计快照：操作者被删除后仍可追溯；长度与 NAME_MAX_LENGTH 对齐
+  actorId: integer('actor_id'),
+  actorName: varchar('actor_name', { length: 255 }),
+  // 语义动作码，如 schedule.publish、user.status、settings.update
+  action: varchar('action', { length: 80 }).notNull(),
+  targetType: varchar('target_type', { length: 50 }),
+  // 单个目标 ID；批量操作写 batch:<数量>，明细放 summary
+  targetId: varchar('target_id', { length: 200 }),
+  // 变更摘要（脱敏后 JSON 字符串）
+  summary: text('summary'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  // 取值由 ADMIN_AUDIT_RESULT 保证：SUCCESS / FAILURE
+  result: varchar('result', { length: 10 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('admin_audit_logs_created_idx').on(table.createdAt),
+  index('admin_audit_logs_actor_idx').on(table.actorId, table.createdAt),
+  index('admin_audit_logs_action_idx').on(table.action, table.createdAt),
+]);
 
 // 用户状态变更日志表
 export const userStatusLogs = pgTable('user_status_logs', {
@@ -849,6 +901,8 @@ export type ApiLog = typeof apiLogs.$inferSelect;
 export type NewApiLog = typeof apiLogs.$inferInsert;
 export type UserStatusLog = typeof userStatusLogs.$inferSelect;
 export type NewUserStatusLog = typeof userStatusLogs.$inferInsert;
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type NewAdminAuditLog = typeof adminAuditLogs.$inferInsert;
 export type SongCollaborator = typeof songCollaborators.$inferSelect;
 export type NewSongCollaborator = typeof songCollaborators.$inferInsert;
 export type CollaborationLog = typeof collaborationLogs.$inferSelect;

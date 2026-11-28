@@ -1,3 +1,4 @@
+import { hasAdminPermission } from '~~/app/utils/admin-permissions'
 import { createError, defineEventHandler, getQuery } from 'h3'
 import type { H3Event } from 'h3'
 import { client } from '~/drizzle/db'
@@ -306,7 +307,7 @@ export default defineEventHandler(async (event) => {
     const requestedPage = parseInt(String(query.page || ''), 10)
     const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1
     const user = event.context.user || null
-    const isAdmin = Boolean(user && ['ADMIN', 'SUPER_ADMIN', 'SONG_ADMIN'].includes(user.role))
+    const isAdmin = Boolean(user && hasAdminPermission(user, 'songs:read'))
 
     const params: any[] = [user?.id ?? null]
     const addParam = (value: any) => {
@@ -683,7 +684,7 @@ export default defineEventHandler(async (event) => {
       availableSemesters = semesterRows.map((row: any) => String(row.semester)).filter(Boolean)
     }
 
-    // 管理员扩展信息：统计每位投稿人的投稿次数与播出次数（按已播出的排期条目计）
+    // 管理员扩展信息：统计每位投稿人的投稿次数与播出次数（播出按已播放歌曲的正式排期条目计）
     const requesterStatsMap = new Map<number, { submissionCount: number; playCount: number }>()
     if (isAdmin) {
       const requesterIds = [
@@ -706,12 +707,11 @@ export default defineEventHandler(async (event) => {
           SELECT
             s."requesterId",
             COUNT(DISTINCT s.id)::int AS "submissionCount",
-            COUNT(sch.id)::int AS "playCount"
+            COUNT(sch.id) FILTER (WHERE s.played)::int AS "playCount"
           FROM "Song" s
           LEFT JOIN "Schedule" sch
             ON sch."songId" = s.id
             AND sch."isDraft" = false
-            AND sch.played = true
           WHERE s."requesterId" = ANY($1::int[])${semesterCondition}
           GROUP BY s."requesterId"
         `,
@@ -886,7 +886,7 @@ export default defineEventHandler(async (event) => {
         )
         const fallbackPage = Math.max(parseInt(String(fallbackQuery.page || ''), 10) || 1, 1)
         const fallbackUser = event.context.user || null
-        const fallbackIsAdmin = Boolean(fallbackUser && ['ADMIN', 'SUPER_ADMIN', 'SONG_ADMIN'].includes(fallbackUser.role))
+        const fallbackIsAdmin = Boolean(fallbackUser && hasAdminPermission(fallbackUser, 'songs:read'))
         return await loadBasicSongs(client, fallbackSemester, fallbackGrade, fallbackSearch, fallbackUser, fallbackIsAdmin, {
           scope: fallbackScope,
           sortBy: fallbackSortBy,

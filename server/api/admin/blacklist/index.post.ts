@@ -7,16 +7,10 @@ import {
   BLACKLIST_LANGUAGE_VALUES,
   BLACKLIST_GENRE_VALUES
 } from '~~/server/config/constants'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
-  // 检查认证和权限
   const user = event.context.user
-  if (!user || !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '需要管理员权限'
-    })
-  }
 
   const body = await readBody(event)
   const { type, value, reason } = body
@@ -76,6 +70,12 @@ export default defineEventHandler(async (event) => {
         isActive: true
       })
       .returning()
+
+    await recordAdminAudit(event, 'blacklist.create', {
+      targetType: 'blacklist',
+      targetId: blacklistItem[0]?.id,
+      summary: { type, value: value.trim(), reason: reason?.trim() }
+    })
 
     return {
       success: true,

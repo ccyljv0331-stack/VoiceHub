@@ -4,16 +4,10 @@ import { restoreReplayRequestsToPending } from '~~/server/utils/scheduleReplayBi
 import { getServerDate } from '~~/server/utils/serverTime'
 import { createApiError } from '~~/server/utils/apiError'
 import { SERVER_ERROR_CODES } from '~~/server/config/constants'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
-  // 验证管理员权限
   const user = event.context.user
-  if (!user || !['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '需要歌曲管理员及以上权限'
-    })
-  }
 
   try {
     const body = await readBody(event)
@@ -118,6 +112,16 @@ export default defineEventHandler(async (event) => {
       }
 
       return deletedSchedule
+    })
+
+    await recordAdminAudit(event, 'schedule.remove', {
+      targetType: 'schedule',
+      targetId: scheduleIdNumber,
+      summary: {
+        songId: existingSchedule.songId,
+        title: existingSchedule.songTitle,
+        isDraft: existingSchedule.isDraft
+      }
     })
 
     return {

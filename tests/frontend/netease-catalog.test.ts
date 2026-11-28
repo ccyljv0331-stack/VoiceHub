@@ -90,13 +90,12 @@ async function bundleModule<T>(entry: string, fetcher: (request: Request) => unk
   const mocks: Record<string, string> = {
     '~/utils/musicSources': 'const sources=[{id:"netease-backup-1",baseUrl:"/netease"},{id:"netease-gdstudio",baseUrl:"/gd"},{id:"vkeys",baseUrl:"/qq"},{id:"bilibili",baseUrl:"/bili"}]; export const MUSIC_SOURCE_CONFIG={primarySource:sources[0].id};export const getEnabledSources=()=>sources;export const getSourceById=id=>sources.find(x=>x.id===id);export const getVkeysIdParam=(platform,id)=>({key:"id",value:id})',
     '~/utils/bilibiliSource': 'export const getBilibiliTrackUrl=async()=>({url:"https://bili.example/audio"});export const searchBilibili=()=>{};export const parseBilibiliId=id=>({bvid:id})',
-    '~/utils/lyric/lyricMatchQuality': 'export const evaluateLyricDataMatch=()=>{}',
+    '~/utils/lyric/lyricMatchQuality': 'export const evaluateLyricDataMatch=()=>{};export const hasWordTiming=()=>true',
     '~/utils/invalidPlaybackUrls': 'export const isPlaybackUrlInvalid=()=>false',
     './useLyricSettings': 'export const useLyricSettings=()=>({})',
     './usePlatformConfig': 'export const usePlatformConfig=()=>({enabledPlatforms:{value:["netease","tencent","bilibili"]}})',
     './useLocaleText': 'export const useServerErrors=()=>({localize:()=>"错误"});export const useLocaleText=()=>({t:(key,fallback,requested,actual)=>`请求${requested}，当前音质：${actual}`})',
     '~/utils/locale': 'export const useLocale=()=>({audioPlayer:{value:{}},ui:{value:{audioQuality:{unknown:"音质未知",levels:{standard:"标准",higher:"较高",exhigh:"HQ极高",hires:"Hi-Res"},options:{standard:{label:"标准"},neteaseHq:{label:"HQ极高"},neteaseHiRes:{label:"Hi-Res"}}}}}})',
-    '~/utils/platforms': 'export const getPlatformDisplayName=()=>"网易云"',
     '~/utils/pluginPlatform': 'export const getPluginId=()=>{};export const getPluginQuality=x=>x;export const isPluginPlatform=()=>false;export const LEGACY_PLUGIN_PLATFORM_PREFIX="musicfree:";export const PLUGIN_PLATFORM_PREFIX="plugin:"',
     '~/utils/neteaseApi': 'export const getLoginStatus=async()=>({})',
     ...overrides

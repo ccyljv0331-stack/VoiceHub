@@ -1,11 +1,10 @@
 import { CARD_CODE_DISPATCH_LIMITS, recycleCardCodeAssignments } from '~~/server/services/cardCodeAssignmentService'
-import { requireSongAdmin } from '~~/server/utils/requireSongAdmin'
 import { createApiError } from '~~/server/utils/apiError'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 import { SERVER_ERROR_CODES } from '~~/server/config/constants'
 
 /** 回收派发券到可用池。 */
 export default defineEventHandler(async (event) => {
-  requireSongAdmin(event)
   const user = event.context.user!
 
   const body = (await readBody(event)) || {}
@@ -35,6 +34,16 @@ export default defineEventHandler(async (event) => {
 
   const succeeded = outcomes.filter((item) => item.success)
   const failures = outcomes.filter((item) => !item.success)
+
+  await recordAdminAudit(event, 'card-code.recycle', {
+    targetType: 'card-code',
+    targetId: `batch:${assignmentIds.length}`,
+    summary: {
+      recycledCount: succeeded.length,
+      failedCount: failures.length,
+      reason: reason || null
+    }
+  })
 
   return {
     success: succeeded.length > 0,

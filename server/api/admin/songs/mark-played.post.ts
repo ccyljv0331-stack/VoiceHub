@@ -15,25 +15,8 @@ const markPlayedSchema = z.object({
   unmark: z.boolean().optional()
 })
 
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 export default defineEventHandler(async (event) => {
-  // 检查用户认证
-  const user = event.context.user
-
-  if (!user) {
-    throw createError({
-      statusCode: 401,
-      message: '需要登录才能标记歌曲'
-    })
-  }
-
-  // 检查是否是管理员
-  if (!['ADMIN', 'SUPER_ADMIN', 'SONG_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '只有管理员可以标记歌曲为已播放'
-    })
-  }
-
   const body = await readBody(event)
   const validatedDataResult = markPlayedSchema.safeParse(body)
 
@@ -84,7 +67,6 @@ export default defineEventHandler(async (event) => {
       const transition = isUnmark ? restoreCardCodeAfterScheduleRemoval : redeemCardCodeForSchedule
       await transition(tx, { songId: song.id, cardCodeId: song.cardCodeId, operatorId, at: getServerDate(), cancelPlayback: isUnmark })
     }
-
 
     if (updatedSongIds.length > 0) {
       if (!isUnmark) {
@@ -144,6 +126,12 @@ export default defineEventHandler(async (event) => {
       }
     })())
   }
+
+  await recordAdminAudit(event, isUnmark ? 'song.unmark-played' : 'song.mark-played', {
+    targetType: 'song',
+    targetId: `batch:${updatedSongIds.length}`,
+    summary: { count: updatedSongIds.length, songIds: updatedSongIds }
+  })
 
   return {
     message: isUnmark ? '歌曲已成功撤回已播放状态' : '歌曲已成功标记为已播放',

@@ -3,6 +3,14 @@ import test from 'node:test'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import {
+  PRIV_ADMIN_CONSOLE,
+  ROLE_PERMISSION_TEMPLATES_DEFAULT,
+  hasAllPermissions,
+  hasAnyPermission,
+  resolveEffectivePermissions
+} from '../../app/utils/admin-permissions.ts'
+import { resolveAdminRouteGuard } from '../../server/utils/admin-permission-routes.ts'
 
 const require = createRequire(import.meta.url)
 const target = globalThis as any
@@ -22,7 +30,8 @@ const modules: Record<string, string> = {
     export const restoreCardCodeAfterScheduleRemoval=(...args)=>globalThis.__cardPlaybackFixture.transition('RESTORE',...args);`,
   '~~/server/utils/scheduleReplayBinding': `export const restoreReplayRequestsToPending=(args)=>globalThis.__cardPlaybackFixture.restoreReplay(args);`,
   '~~/server/services/notificationService': `export const createSongPlayedNotifications=(ids)=>globalThis.__cardPlaybackFixture.notify('USER',ids);`,
-  '~~/server/services/astrbotGroupService': `export const enqueueAstrbotGroupEvent=(...args)=>globalThis.__cardPlaybackFixture.notify('GROUP',args);`
+  '~~/server/services/astrbotGroupService': `export const enqueueAstrbotGroupEvent=(...args)=>globalThis.__cardPlaybackFixture.notify('GROUP',args);`,
+  '~~/server/utils/admin-audit': `export const ADMIN_AUDIT_RESULT={SUCCESS:'SUCCESS',FAILURE:'FAILURE'}; export const recordAdminAudit=async()=>{};`
 }
 
 async function loadHandler(kind: string) {
@@ -169,12 +178,14 @@ for (const kind of ['admin', 'open'] as const) {
   })
 }
 
-test('admin 无用户或角色不足时不启动播放事务', async () => {
-  for (const [context, statusCode] of [[{}, 401], [{ user: { id: 3, role: 'USER' } }, 403]] as const) {
-    const f = fixture()
-    await assert.rejects(handlers.admin(f.event('admin', {}, context)), (error: any) => error.statusCode === statusCode)
-    assert.equal(f.transactions, 0)
-    assert.equal(f.calls.length, 0)
+test('admin 播放接口准入由守卫表把关，与重构前角色名单一致', () => {
+  const guard = resolveAdminRouteGuard('/api/admin/songs/mark-played', 'POST')
+  assert.ok(guard && !guard.deny, '播放接口缺少守卫登记')
+  const allowed = ['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN']
+  for (const role of ['USER', ...allowed]) {
+    const perms = resolveEffectivePermissions({ role }, ROLE_PERMISSION_TEMPLATES_DEFAULT)
+    const pass = hasAllPermissions(perms, [PRIV_ADMIN_CONSOLE]) && hasAnyPermission(perms, guard!.any)
+    assert.equal(pass, allowed.includes(role), `${role} 访问播放接口的结论与重构前不一致`)
   }
 })
 

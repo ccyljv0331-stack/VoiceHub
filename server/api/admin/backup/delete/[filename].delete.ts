@@ -2,17 +2,11 @@ import { createError, defineEventHandler, getRouterParam } from 'h3'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { isSafeBackupFilename } from '~~/server/utils/backup-filename'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
   try {
-    // 验证管理员权限
     const user = event.context.user
-    if (!user || user.role !== 'SUPER_ADMIN') {
-      throw createError({
-        statusCode: 403,
-        message: '只有超级管理员可以管理备份文件'
-      })
-    }
 
     const filename = getRouterParam(event, 'filename')
 
@@ -48,6 +42,11 @@ export default defineEventHandler(async (event) => {
     await fs.unlink(filepath)
 
     console.log(`管理员 ${user.username} 删除了备份文件：${filename}`)
+
+    await recordAdminAudit(event, 'backup.delete', {
+      targetType: 'backup',
+      targetId: typeof filename === 'string' ? filename : String(filename)
+    })
 
     return {
       success: true,

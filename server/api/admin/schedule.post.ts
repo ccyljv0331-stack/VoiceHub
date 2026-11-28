@@ -7,23 +7,9 @@ import { fulfillReplayRequestsForSchedule, parseScheduleReplayRequestId, resolve
 import { assertSchedulePlacement } from '~~/server/utils/schedulePlacementConstraint'
 import { getServerDate } from '~~/server/utils/serverTime'
 
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 export default defineEventHandler(async (event) => {
-  // 检查用户认证和权限
   const user = event.context.user
-
-  if (!user) {
-    throw createError({
-      statusCode: 401,
-      message: '未授权访问'
-    })
-  }
-
-  if (!['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '只有歌曲管理员及以上权限才能创建排期'
-    })
-  }
 
   const body = await readBody(event)
 
@@ -209,6 +195,12 @@ export default defineEventHandler(async (event) => {
     }
 
     const schedule = transactionResult.schedule
+
+    await recordAdminAudit(event, isDraft ? 'schedule.draft' : 'schedule.publish', {
+      targetType: 'schedule',
+      targetId: schedule.id,
+      summary: { songId: body.songId, playDate: schedule.playDate, legacy: true }
+    })
 
     return {
       ...schedule,

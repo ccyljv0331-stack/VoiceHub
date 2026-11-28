@@ -3,12 +3,6 @@ import { desc, eq, sql, and } from 'drizzle-orm'
 import { buildNameToUsersMap, formatDisambiguatedNameFromMap } from '~~/server/utils/userDisplayName'
 
 export default defineEventHandler(async (event) => {
-  // 1. 检查权限
-  const user = event.context.user
-  if (!user || !['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({ statusCode: 403, message: '权限不足' })
-  }
-
   // 获取查询参数
   const query = getQuery(event)
   const status = (query.status as string) || 'PENDING' // PENDING, FULFILLED, REJECTED, ALL
@@ -40,7 +34,7 @@ export default defineEventHandler(async (event) => {
         playedAt: songs.playedAt,
         semester: songs.semester,
         preferredPlayTimeId: songs.preferredPlayTimeId,
-        // 期望播出日期：自动排期时该歌曲只在对应日期参与排期
+        // 期望播出日期：自动排期的软偏好，命中当天时提高入选概率，不过滤候选
         preferredPlayDate: songs.preferredPlayDate,
         cover: songs.cover,
         playUrl: songs.playUrl,

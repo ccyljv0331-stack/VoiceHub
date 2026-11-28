@@ -2,16 +2,10 @@ import { releaseCardCodeAfterSongWithdrawal } from '~~/server/services/cardCodeL
 import { db } from '~/drizzle/db'
 import { schedules, songs, votes, requestTimes } from '~/drizzle/schema'
 import { eq, sql } from 'drizzle-orm'
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 
 export default defineEventHandler(async (event) => {
-  // 检查用户认证和权限
   const user = event.context.user
-  if (!user || !['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '没有权限访问'
-    })
-  }
 
   const body = await readBody(event)
 
@@ -23,6 +17,8 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    let deletedSongSnapshot: { title?: string; artist?: string } | null = null
+
     // 使用事务确保删除操作的原子性
     const result = await db.transaction(async (tx) => {
       // 在事务中重新检查歌曲是否存在
@@ -69,6 +65,7 @@ export default defineEventHandler(async (event) => {
       const deletedSongData = deletedSong[0]
 
       console.log(`成功删除歌曲: ${deletedSongData?.title}`)
+      deletedSongSnapshot = { title: deletedSongData?.title, artist: deletedSongData?.artist }
 
       return {
         message: '歌曲已成功删除',
@@ -76,6 +73,12 @@ export default defineEventHandler(async (event) => {
         deletedVotes: true,
         deletedSchedules: true
       }
+    })
+
+    await recordAdminAudit(event, 'song.delete', {
+      targetType: 'song',
+      targetId: body.songId,
+      summary: deletedSongSnapshot ?? {}
     })
 
     return result

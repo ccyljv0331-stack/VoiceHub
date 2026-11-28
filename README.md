@@ -197,6 +197,8 @@ docker-compose up -d
 
 - 用户名：admin
 - 密码：admin123
+- 默认口令按临时密码处理，首次登录需设置新密码
+- 启动时自动检测仍在使用默认口令的超级管理员，补上强制改密标记
 
 #### 方式二：使用预构建镜像
 
@@ -539,6 +541,8 @@ pnpm run create-admin
 
 - 用户名：admin
 - 密码：admin123
+- 默认口令按临时密码处理，首次登录需设置新密码
+- 启动时自动检测仍在使用默认口令的超级管理员，补上强制改密标记
 
 6. 启动开发服务器
 
@@ -640,8 +644,8 @@ VoiceHub 实现了细粒度的权限控制系统：
 
 #### 角色类型
 
-- **超级管理员 (SUPER_ADMIN)**：拥有所有系统权限，包括用户管理、系统配置、数据库管理等
-- **管理员 (ADMIN)**：拥有日常管理权限，如用户管理、排期管理、歌曲管理、系统配置等
+- **超级管理员 (SUPER_ADMIN)**：拥有所有系统权限，包括用户管理、系统设置中的凭据与策略配置、备份恢复、数据库管理等。可由现有超级管理员在用户管理中授予或撤销，活跃的超级管理员上限 3 个、至少保留 1 个，不参与批量导入
+- **管理员 (ADMIN)**：内容与用户日常管理权限，包括用户管理、排期管理、歌曲管理、点歌券、数据分析，以及投稿与播放限制、限额、卡密、音源平台等运营配置
 - **歌曲管理员 (SONG_ADMIN)**：专门负责歌曲相关管理，包括排期管理、歌曲管理、打印排期等
 - **普通用户 (USER)**：基本的点歌、投票和查看权限
 
@@ -654,7 +658,7 @@ VoiceHub 实现了细粒度的权限控制系统：
 #### 权限继承与分配
 
 - **SUPER_ADMIN**：拥有所有权限
-- **ADMIN**：拥有除数据库管理外的所有权限
+- **ADMIN**：内容与用户日常管理、运营类系统配置
 - **SONG_ADMIN**：拥有内容管理相关权限（排期、歌曲、打印）
 - **USER**：仅拥有基本的点歌和查看权限
 
@@ -663,6 +667,15 @@ VoiceHub 实现了细粒度的权限控制系统：
 - 前端基于角色动态显示界面元素和菜单
 - 后端API进行严格的权限验证
 - 支持页面级和功能级的权限控制
+
+#### 敏感操作二次验证
+
+- 授予或撤销超级管理员身份时，操作者需重新验证凭据：口令与验证器动态码二选一，账号已绑定验证器时默认优先动态验证码；单一凭据验证失败不回落另一种凭据
+- 验证通过后在服务端签发短期特权窗口（按场景 + 用户 + 会话绑定，默认 5 分钟），不返回任何客户端令牌，换会话或换场景均不继承
+- 验证场景为封闭白名单（`server/utils/step-up.ts`），后续接入备份恢复、数据库重置等只需追加场景项
+- 验证失败与超管身份变更均写入口令审计流水，并向全体活跃超级管理员推送系统通知
+- 范围限定于超级管理员身份变更：仅停用超管账号或对其施加显式拒绝不会触发验证（数量下限仍会拦住归零）
+- 从备份恢复是例外：恢复任意备份本身等价于最高权限，其中携带的超管账号不受验证与数量上限约束，恢复后需人工核对超管名单
 
 ## 环境变量说明
 
@@ -676,7 +689,7 @@ VoiceHub 实现了细粒度的权限控制系统：
 | REDIS_KEY_PREFIX       | 否   | Redis键命名空间，多环境共用Redis时应分别设置            | `voicehub:v2:`                                                                                                                                  |
 | NITRO_PRESET           | 否   | Nitro预设                                               | `vercel`                                                                                                                                        |
 | IS_SERVERLESS          | 否   | 声明为 Serverless 运行环境（连接池压低、备份改为直接返回数据、群事件投递器不启动）。平台未注入 `VERCEL`/`NETLIFY` 且未设置 `NITRO_PRESET` 时用它，如 EdgeOne Pages | `true` |
-| NUXT_PUBLIC_HOST       | 否   | 显式配置站点外部地址后启用内部 API 的 CORS 来源校验；未配置时仅对回环 Host（反向代理常见场景）跳过，云平台公开 Host 仍校验 | `https://your-app.com` |
+| NUXT_PUBLIC_HOST       | 否   | 站点外部地址，用于内部 API 来源校验；使用 AstrBot 绑定链接时必填 | `https://your-app.com` |
 | NUXT_PUBLIC_SEO_CONFIG | 否   | 用于自定义 PWA/SEO 配置的 JSON 字符串                   | `{"title":"VoiceHub校园广播站点歌系统","shortName":"校园广播","description":"校园广播站点歌系统 - 让你的声音被听见","logo":"/images/logo.png"}` |
 
 ## OAuth 配置
@@ -753,6 +766,9 @@ VoiceHub/
 │   │   │   └── SocialBindings.vue     # 社交账号绑定
 │   │   ├── Admin/             # 管理员功能组件
 │   │   │   ├── ApiKeyManager.vue      # API密钥管理
+│   │   │   ├── AuditLogPanel.vue      # 管理员操作审计面板
+│   │   │   ├── LogManagement.vue      # 日志管理（级别/保留天数/查询导出清理）
+│   │   │   ├── LogTable.vue           # 日志表格容器（表头/加载态/空状态）
 │   │   │   ├── BackupAutoSettings.vue # 自动备份设置
 │   │   │   ├── BackupManager.vue      # 数据库备份管理
 │   │   │   ├── BatchUpdateModal.vue   # 批量更新模态框
@@ -773,6 +789,7 @@ VoiceHub/
 │   │   │   ├── OAuthBindingsModal.vue # OAuth 绑定详情弹窗
 │   │   │   ├── OverviewDashboard.vue  # 管理概览仪表板
 │   │   │   ├── PlayTimeManager.vue    # 播放时间管理
+│   │   │   ├── PermissionMatrix.vue  # 权限矩阵页
 │   │   │   ├── ProviderConfigSection.vue # OAuth 提供商配置组件
 │   │   │   ├── RequestTimeManager.vue # 投稿开放时段 & 重复投稿限制管理
 │   │   │   ├── ScheduleForm.vue       # 排期表单
@@ -791,10 +808,12 @@ VoiceHub/
 │   │   │   ├── SongManagement.vue     # 歌曲管理
 │   │   │   ├── SongSourceReplaceModal.vue # 歌曲换源弹窗（跨音源搜索与替换）
 │   │   │   ├── SubmissionRemarkDialog.vue # 投稿备注弹窗
+│   │   │   ├── StepUpDialog.vue     # 敏感操作二次验证弹窗
 │   │   │   ├── UserManager.vue        # 用户管理
 │   │   │   ├── UserApprovalModal.vue  # 用户注册审核弹窗
 │   │   │   ├── UserExportModal.vue    # 用户导出弹窗
 │   │   │   ├── GradeClassManager.vue  # 年级班级配置管理
+│   │   │   ├── UserPermissionsModal.vue # 按用户显式授权弹窗
 │   │   │   ├── UserSongsModal.vue     # 用户歌曲查看弹窗
 │   │   │   └── VotersModal.vue        # 投票人员查看弹窗
 │   │   ├── AMLL/              # Apple Music-Like Lyrics组件
@@ -919,8 +938,6 @@ VoiceHub/
 │   │   ├── usePermissions.ts   # 权限管理hooks
 │   │   ├── usePasswordStrength.ts # 密码强度检测hooks
 │   │   ├── usePlayerLayout.ts  # 播放器布局（固定底部/自由拖拽）偏好hooks
-│   │   ├── useProgress.ts      # 进度管理hooks
-│   │   ├── useProgressEvents.ts # 进度事件hooks
 │   │   ├── useRequestDedup.ts  # 请求去重hooks
 │   │   ├── useSafeLocale.ts    # 安全 i18n 文本包装hooks
 │   │   ├── useScrollMemory.ts  # 页面滚动位置记忆hooks
@@ -929,6 +946,7 @@ VoiceHub/
 │   │   ├── useSongPlayer.ts    # 歌曲播放器hooks
 │   │   ├── useSchedulePlaylistSync.ts # 本标签页排期保存后的队列刷新与生命周期
 │   │   ├── useSongs.ts         # 歌曲管理hooks
+│   │   ├── useStepUp.ts        # 敏感操作二次验证弹窗编排hooks
 │   │   ├── useSyncedTime.ts    # 服务器时间对时hooks
 │   │   ├── useTheme.ts         # 主题管理
 │   │   ├── useThemeImage.ts    # 主题图片获取
@@ -954,6 +972,8 @@ VoiceHub/
 │   │   ├── change-password.vue # 修改密码页面
 │   │   ├── dashboard.vue       # 用户仪表盘
 │   │   ├── forgot-password.vue # 找回密码页面
+│   │   ├── bind/               # 机器人绑定确认页
+│   │   │   └── [token].vue     # 登录后确认绑定链接
 │   │   ├── index.vue           # 首页
 │   │   ├── legal/              # 协议文档页面
 │   │   │   └── [slug].vue      # 协议文档内容页
@@ -1005,13 +1025,14 @@ VoiceHub/
 │       │   ├── lyricStripper.ts # 歌词清理
 │       │   ├── parseLrc.ts    # LRC格式解析
 │       │   └── qrc-parser.ts  # QRC格式解析
+│       ├── admin-permissions.ts # 后台权限码目录与有效权限解析
 │       ├── bilibiliSource.ts  # 哔哩哔哩音源
 │       ├── cover-theme.ts    # 封面取色与歌词主题色（AMLL 调色板）
 │       ├── debounce.ts       # 防抖工具
 │       ├── esaCaptcha.ts     # 阿里云 ESA AI验证码区域与服务端节点共享常量
 │       ├── grade-class-input.ts # 年级班级批量输入解析
 │       ├── gradeClassWeights.js # 年级排序权重
-│       ├── invalidPlaybackUrls.ts # 播放端确认无效的地址登记（换源时跳过坏链）
+│       ├── invalidPlaybackUrls.ts # 播放端确认无效的地址登记
 │       ├── lyricAdapter.ts    # 歌词适配器
 │       ├── markdown.js        # Markdown工具
 │       ├── musicSources.ts    # 音乐源配置
@@ -1022,6 +1043,8 @@ VoiceHub/
 │       ├── playerLayout.ts    # 播放器布局模式与自由拖拽坐标解析
 │       ├── blacklist.ts       # 歌曲类型黑名单候选值共享（语种/曲风）
 │       ├── sentryUpstreamMusicErrors.ts # Sentry 上游音源错误过滤
+│       ├── preview-duration.ts # 播放地址时长与歌曲时长比对（试听片段检测）
+│       ├── song-duration.ts   # 疑似试听片段时长判定
 │       ├── song-name-normalize.ts # 歌曲名称归一化匹配
 │       ├── neteaseApi.ts      # 网易云音乐API
 │       ├── neteaseCatalog.ts  # 网易云曲库播放响应的歌曲、音质与试听标记核验
@@ -1031,6 +1054,8 @@ VoiceHub/
 │       ├── email-verification.ts # 注册邮箱验证码
 │       ├── embedded-browser.ts # 微信/QQ内置浏览器UA检测
 │       ├── password-policy.ts # 统一密码策略
+│       ├── settingsPermissions.ts # 系统设置中仅超级管理员可读写字段清单
+│       ├── custom-css-policy.ts # 自定义CSS安全策略
 │       ├── oauth.ts           # OAuth工具
 │       ├── autoSchedule.ts    # 自动排期算法
 │       ├── schedulePlayTime.ts # 排期播出时段判定（带时段排期统计）
@@ -1052,6 +1077,10 @@ VoiceHub/
 │   │   │   │   ├── index.post.ts    # 创建API密钥
 │   │   │   │   ├── logs.get.ts      # API使用日志
 │   │   │   │   └── permissions.ts   # API密钥权限定义
+│   │   │   ├── audit-logs/          # 管理员操作审计API
+│   │   │   │   ├── export.get.ts    # 导出审计日志（CSV/JSONL）
+│   │   │   │   ├── index.get.ts     # 获取审计日志列表
+│   │   │   │   └── stats.get.ts     # 获取审计日志统计
 │   │   │   ├── backup/              # 备份管理API
 │   │   │   │   ├── delete/          # 删除备份子目录
 │   │   │   │   │   └── [filename].delete.ts
@@ -1062,12 +1091,15 @@ VoiceHub/
 │   │   │   │   ├── clear.post.ts    # 清空备份历史
 │   │   │   │   ├── download.get.ts  # 下载备份
 │   │   │   │   ├── export.post.ts   # 创建备份
+│   │   │   │   ├── github-file.get.ts # 读取 Git 仓库备份文件正文
+│   │   │   │   ├── github-history.get.ts # 读取 Git 仓库备份提交历史
 │   │   │   │   ├── history.get.ts   # 获取备份历史
 │   │   │   │   ├── history-clear.post.ts # 清空备份历史记录
 │   │   │   │   ├── list.get.ts      # 获取备份列表
 │   │   │   │   ├── restore-chunk.post.ts # 恢复备份分片
 │   │   │   │   ├── restore.post.ts  # 恢复备份
 │   │   │   │   ├── test-email.post.ts  # 测试邮件发送
+│   │   │   │   ├── test-github.post.ts # 测试 Git 仓库连接
 │   │   │   │   ├── test-s3.post.ts     # 测试 S3 连接
 │   │   │   │   ├── test-telegram.post.ts # 测试 Telegram Bot
 │   │   │   │   ├── test-webdav.post.ts  # 测试 WebDAV 连接
@@ -1083,6 +1115,12 @@ VoiceHub/
 │   │   │   │   ├── initialize.post.ts # 从现有用户提取初始化
 │   │   │   │   ├── index.get.ts     # 获取配置列表
 │   │   │   │   └── index.post.ts    # 新增配置项
+│   │   │   ├── log-management/      # 日志管理API
+│   │   │   │   ├── access/          # API 访问日志子目录
+│   │   │   │   │   └── export.get.ts # 导出访问日志（CSV/JSONL）
+│   │   │   │   ├── access.get.ts    # 获取 API 访问日志列表
+│   │   │   │   ├── cleanup.post.ts  # 按保留天数清理过期日志
+│   │   │   │   └── stats.get.ts     # 获取日志统计
 │   │   │   ├── card-codes/          # 点歌券管理API
 │   │   │   │   ├── [id].put.ts      # 更新单张点歌券
 │   │   │   │   ├── assignments.get.ts # 派发记录查询
@@ -1100,8 +1138,7 @@ VoiceHub/
 │   │   │   │   ├── cleanup.post.ts  # 数据库清理
 │   │   │   │   ├── performance.get.ts # 数据库性能监控
 │   │   │   │   ├── pool-status.get.ts # 连接池状态
-│   │   │   │   ├── reset.post.ts    # 重置数据库
-│   │   │   │   └── status.get.ts    # 数据库状态
+│   │   │   │   └── reset.post.ts    # 重置数据库
 │   │   │   ├── music-source-plugins/ # 音源插件配置、启停、排序与验证
 │   │   │   │   ├── [id].delete.ts   # 移除音源插件
 │   │   │   │   ├── [id].put.ts      # 更新音源插件
@@ -1126,6 +1163,9 @@ VoiceHub/
 │   │   │   │   │   └── [batchId].put.ts # 修改通知批次
 │   │   │   │   ├── history.get.ts   # 查询按发送批次归类的通知历史
 │   │   │   │   └── send.post.ts     # 发送通知
+│   │   │   ├── permissions/         # 权限矩阵API
+│   │   │   │   ├── matrix.get.ts    # 读取角色权限模板与持有者统计
+│   │   │   │   └── matrix.put.ts    # 保存角色权限模板（安全阀校验）
 │   │   │   ├── play-times/          # 播放时间管理API
 │   │   │   │   ├── [id].ts          # 播放时间操作
 │   │   │   │   ├── index.post.ts    # 创建播放时间
@@ -1159,6 +1199,7 @@ VoiceHub/
 │   │   │   │   ├── index.post.ts    # 创建学期
 │   │   │   │   └── set-active.post.ts # 设置活跃学期
 │   │   │   ├── smtp/                # SMTP邮件服务API
+│   │   │   ├── recipients.get.ts    # 功能操作使用的轻量接收人查询
 │   │   │   │   ├── reload.post.ts   # 重新加载SMTP配置
 │   │   │   │   ├── test-connection.post.ts # 测试SMTP连接
 │   │   │   │   └── test-email.post.ts # 发送测试邮件
@@ -1179,6 +1220,7 @@ VoiceHub/
 │   │   │   │   ├── trends.get.ts    # 趋势分析
 │   │   │   │   └── user-engagement.get.ts # 用户参与度统计
 │   │   │   ├── system-settings/     # 系统设置API
+│   │   │   │   ├── [scope].ts       # 按模块隔离的配置读取与更新
 │   │   │   │   ├── env-oauth-import.post.ts # 导入环境变量OAuth配置
 │   │   │   │   ├── env-oauth.get.ts # 获取环境变量OAuth配置
 │   │   │   │   ├── index.post.ts    # 更新系统设置
@@ -1190,6 +1232,8 @@ VoiceHub/
 │   │   │   │   └── runtime-clear.post.ts # 清空运行事件缓冲
 │   │   │   └── users/               # 用户管理API
 │   │   │       ├── [id]/            # 用户详情操作子目录
+│   │   │       │   ├── permissions.get.ts # 读取用户显式授权与有效权限
+│   │   │       │   ├── permissions.put.ts # 设置用户显式授权（越权与安全阀校验）
 │   │   │       │   ├── reset-password.post.ts # 重置用户密码
 │   │   │       │   ├── songs.get.ts     # 获取用户点歌记录
 │   │   │       │   ├── status-logs.get.ts # 获取用户状态变更日志
@@ -1240,6 +1284,7 @@ VoiceHub/
 │   │   │   ├── register.post.ts       # 用户名密码注册
 │   │   │   ├── reset-password.post.ts # 重置密码
 │   │   │   ├── set-initial-password.post.ts # 设置初始密码
+│   │   │   ├── step-up.post.ts    # 敏感操作二次验证（签发短期特权窗口）
 │   │   │   ├── unbind.post.ts        # 解绑社交账号
 │   │   │   └── verify.get.ts        # 验证Token并获取用户信息
 │   │   ├── bilibili/       # Bilibili相关API
@@ -1283,15 +1328,19 @@ VoiceHub/
 │   │   │   │   ├── playlist-songs.post.ts # 获取QQ音乐歌单内歌曲
 │   │   │   │   ├── playlists.post.ts # 获取用户创建与收藏的歌单
 │   │   │   │   └── resolve-mid.get.ts # QQ数字songId解析为字母songmid
-│   │   │   └── search/              # 搜索API
-│   │   │       ├── mg.get.ts        # 咪咕音乐搜索
-│   │   │       ├── tx.get.ts        # 腾讯音乐搜索
-│   │   │       └── wy.get.ts        # 网易云音乐搜索
+│   │   │   ├── search/              # 搜索API
+│   │   │   │   ├── mg.get.ts        # 咪咕音乐搜索
+│   │   │   │   ├── tx.get.ts        # 腾讯音乐搜索
+│   │   │   │   └── wy.get.ts        # 网易云音乐搜索
+│   │   │   └── wy/                   # 网易云音源代理API
+│   │   │       └── url.post.ts      # ikun 网易云备用源服务端代理取链
 │   │   ├── platform-config/  # 平台管理公开API
 │   │   │   └── index.get.ts      # 获取平台启用与排序配置
 │   │   ├── notifications/  # 通知系统API
 │   │   │   ├── astrbot/             # AstrBot 绑定码、状态、解绑与测试推送
 │   │   │   │   ├── bind-code.post.ts # 发放指定平台的绑定码
+│   │   │   │   ├── bind-ticket.get.ts # 预览绑定链接（只读，不落库）
+│   │   │   │   ├── bind-ticket.post.ts # 登录后确认绑定链接
 │   │   │   │   ├── status.get.ts     # 查询四平台绑定状态
 │   │   │   │   ├── test.post.ts      # 向当前绑定目标发送测试推送
 │   │   │   │   └── unbind.post.ts    # 解除指定平台的绑定
@@ -1310,6 +1359,7 @@ VoiceHub/
 │   │   ├── bot/            # AstrBot 插件令牌回调
 │   │   │   ├── voicehub/            # 私聊绑定、歌单与投递回调
 │   │   │   │   ├── bind.post.ts     # 一次性绑定码换取会话绑定
+│   │   │   │   ├── bind-link.post.ts # 会话内发起绑定，返回一次性确认链接
 │   │   │   │   ├── unbind.post.ts   # 机器人侧解绑当前会话
 │   │   │   │   ├── verify-targets.post.ts # 推送前核对私聊绑定、通知开关与群授权
 │   │   │   │   ├── pull.post.ts     # 领取待投递通知（pull 模式下插件轮询）
@@ -1318,7 +1368,7 @@ VoiceHub/
 │   │   │   │   ├── song-sources.get.ts # 机器人侧可用音源平台列表
 │   │   │   │   ├── song-resolve.post.ts # 机器人侧分享链接解析点歌
 │   │   │   │   ├── song-request.post.ts # 机器人侧点歌投稿
-│   │   │   │   ├── password-reset.post.ts # 机器人侧两步确认重置密码
+│   │   │   │   ├── password-reset.post.ts # 私聊会话授权后的两步密码重置
 │   │   │   │   └── weekly-schedule.get.ts # 本周歌单（支持 format=text 纯文本）
 │   │   ├── open/           # 开放API（无需认证）
 │   │   │   ├── card-codes/          # 点歌券开放API
@@ -1340,9 +1390,6 @@ VoiceHub/
 │   │   │   └── index.ts             # 播放时间管理
 │   │   ├── request-times/  # 点歌时间API
 │   │   │   └── index.ts             # 点歌时间管理
-│   │   ├── progress/       # 进度条API
-│   │   │   ├── events.ts            # 进度事件
-│   │   │   └── id.ts                # 进度ID管理
 │   │   ├── proxy/          # 代理服务API
 │   │   │   └── image.get.ts         # 图片代理（解决HTTP/HTTPS混合内容及跨域问题）
 │   │   ├── semesters/      # 学期API
@@ -1394,6 +1441,7 @@ VoiceHub/
 │   │   │   │   ├── unbind.post.ts   # 解绑邮箱
 │   │   │   │   └── verify-code.post.ts # 验证邮箱验证码
 │   │   │   ├── avatar.post.ts      # 设置 OAuth 头像来源
+│   │   │   ├── legal-consent.revoke.post.ts # 撤回登录条款同意并撤销全部会话
 │   │   │   ├── sessions.delete.ts    # 撤销登录会话
 │   │   │   ├── sessions.get.ts       # 获取登录会话列表
 │   │   │   └── year-review.get.ts   # 获取年度回顾数据
@@ -1418,6 +1466,8 @@ VoiceHub/
 │   │   ├── 01.pre-warm-ssr.ts # SSR预热插件
 │   │   ├── error-handler.ts # 错误处理插件
 │   │   ├── redis-lifecycle.ts # Redis短期状态连接生命周期
+│   │   ├── custom-css.ts   # 自定义 CSS 注入插件
+│   │   ├── log-retention.ts # 数据库日志定期清理
 │   │   └── statistics-code.ts # 站点统计代码注入插件
 │   ├── services/           # 业务服务层
 │   │   ├── apiLogService.ts # API日志服务
@@ -1438,10 +1488,15 @@ VoiceHub/
 │   │   ├── systemBoardService.ts # 系统看板数据聚合服务
 │   │   └── userService.ts # 用户服务
 │   ├── utils/              # 服务端工具函数
+│   │   ├── admin-audit.ts # 管理员操作审计记录（脱敏摘要、静默失败）
 │   │   ├── admin-password-policy.ts # 管理员重置密码基础校验策略
+│   │   ├── admin-permission-routes.ts # 后台接口权限守卫表
+│   │   ├── admin-settings-scope.ts # 模块配置权限与字段白名单
 │   │   ├── apiError.ts     # 统一错误码抛出助手 createApiError
 │   │   ├── apiKeyUtils.ts  # API Key生成、哈希与校验
 │   │   ├── astrbot-notification.ts # AstrBot 绑定码与目标校验
+│   │   ├── astrbot-bind-ticket.ts # AstrBot 绑定票据读取与状态校验
+│   │   ├── astrbot-password-reset.ts # 机器人密码恢复授权校验与确认凭据
 │   │   ├── astrbot-adapters.js # 适配器平台映射（绑定鉴权与恢复共用）
 │   │   ├── astrbot-platforms.ts # 机器人四平台开关与目标筛选
 │   │   ├── astrbot-group.ts # 群广播目标与群事件配置规范化
@@ -1450,13 +1505,13 @@ VoiceHub/
 │   │   ├── astrbot-share-link.ts # 点歌分享链接识别与 ID 提取
 │   │   ├── astrbot-song-search.ts # 机器人点歌统一音源搜索与候选归一化
 │   │   ├── astrbot-song-sources.ts # 机器人点歌各音源原始搜索取数
-│   │   ├── astrbot-password-reset.ts # 机器人重置密码两步确认密封令牌
 │   │   ├── astrbot-weekly-config.ts # 本周歌单显示配置与排版归一化（唯一权威）
 │   │   ├── astrbot-error-telemetry.ts # 群聊异常通知的脱敏与限长
 │   │   ├── astrbot-backup.ts # 四平台绑定备份恢复
 │   │   ├── auth.ts         # 认证工具函数
 │   │   ├── auth-route-policy.ts # 强制改密期间的接口访问策略
 │   │   ├── backup-filename.ts # 备份文件名白名单与路径遍历校验
+│   │   ├── backup-test-credentials.ts # 备份测试凭证生成与校验
 │   │   ├── bilibiliWbi.ts  # Bilibili WBI签名工具
 │   │   ├── captcha.ts      # 图形验证码生成工具
 │   │   ├── captchaStore.ts # 分布式短期状态与验证码哈希存储
@@ -1464,15 +1519,23 @@ VoiceHub/
 │   │   ├── database-health.ts # 数据库健康检查
 │   │   ├── database-manager.ts # 数据库管理工具
 │   │   ├── geo.ts          # 地理位置工具
+│   │   ├── githubGitClient.ts # Git 仓库备份客户端
 │   │   ├── grade-class-core.ts # 年级班级选项纯函数
 │   │   ├── grade-class-options.ts # 年级班级选项提取工具
+│   │   ├── identity-secrets.ts # 身份响应脱敏（TOTP 共享密钥不回传）
 │   │   ├── initial-password-policy.ts # 初始密码设置状态策略
 │   │   ├── important-notification-policy.ts # 重要通知发送与展示策略
 │   │   ├── notification-history-policy.ts # 通知批次引用、筛选与分页策略
 │   │   ├── instance-id.ts  # 实例ID管理工具
 │   │   ├── ip-utils.ts     # IP地址工具
+│   │   ├── permission-admin.ts # 权限矩阵数据层
+│   │   ├── permission-policy.ts # 权限模板/显式授权校验与安全阀纯策略
 │   │   ├── jwt-enhanced.ts # JWT工具
+│   │   ├── log-export.ts   # 日志导出（CSV 转义防公式注入 / JSONL）
 │   │   ├── log-manager.ts  # 日志管理工具
+│   │   ├── log-query.ts    # 日志列表与导出的共用筛选条件（北京日界）
+│   │   ├── log-retention.ts # 数据库日志保留策略与清理
+│   │   ├── log-settings.ts # 日志级别与保留天数规范化
 │   │   ├── music-source-plugins/ # LX Music 与 MusicFree 音源插件运行时、沙箱与凭证管理
 │   │   │   ├── access.ts    # 后台权限、同源校验与调用限流
 │   │   │   ├── backup.ts    # 插件表备份清单与恢复写入
@@ -1488,6 +1551,7 @@ VoiceHub/
 │   │   │   ├── tickets.ts   # 加密凭证签发与校验
 │   │   │   └── types.ts     # 插件类型定义
 │   │   ├── native_common.ts # 原生API通用工具
+│   │   ├── music-resolve-rate-limit.ts # 匿名播放取链共享限流
 │   │   ├── native_tx.ts    # 腾讯音乐原生API
 │   │   ├── native_wy.ts    # 网易云音乐原生API
 │   │   ├── oauth-providers.ts # OAuth提供商类型与纯函数工具
@@ -1495,9 +1559,8 @@ VoiceHub/
 │   │   ├── oauth-token.ts  # OAuth令牌工具
 │   │   ├── oauth-identity.ts # OAuth身份绑定与头像同步工具
 │   │   ├── oauth.ts        # OAuth通用工具
-│   │   ├── outbound-url.ts # 备份出站地址元数据/内部域名拦截
+│   │   ├── outbound-url.ts # 备份出站地址校验、DNS 固定与重定向拦截
 │   │   ├── pagination.ts   # 分页参数解析与上限夹取
-│   │   ├── permissions.js  # 权限系统配置
 │   │   ├── qqComment.ts    # QQ音乐评论数据归一化
 │   │   ├── qq_music_sdk.ts # QQ音乐SDK调用封装
 │   │   ├── play-slot.ts    # 播出时段适用星期与播出日期校验
@@ -1511,7 +1574,6 @@ VoiceHub/
 │   │   ├── request-utils.ts # 请求处理通用工具
 │   │   ├── card-code-backup.ts # 点歌券与派发流水恢复
 │   │   ├── recipient-tree.ts # 派发接收人年级班级树构建
-│   │   ├── requireSongAdmin.ts # 歌曲管理员权限校验工具
 │   │   ├── song-duration-policy.ts # 歌曲时长归一化与补齐/清空决策
 │   │   ├── song-name-normalize.ts # 歌曲名称标准化匹配工具
 │   │   ├── song-type-resolver.ts # 歌曲类型（语种/曲风）解析工具
@@ -1526,13 +1588,16 @@ VoiceHub/
 │   │   ├── serverTime.ts   # 服务器时间工具
 │   │   ├── sequence-sync.ts # 自增序列同步工具
 │   │   ├── siteUtils.ts    # 站点工具函数
+│   │   ├── step-up.ts        # 敏感操作二次验证窗口与场景白名单
 │   │   ├── studentMask.ts  # 学生隐私工具
 │   │   ├── submissionLimit.ts # 投稿限额工具
 │   │   ├── submission-restriction-policy.ts # 重复投稿限制模式判定
 │   │   ├── system-settings-defaults.ts # 系统设置默认值
+│   │   ├── smtp-test-config.ts # SMTP 测试配置与保存密码的目标约束
 │   │   ├── system-settings-helper.ts # 系统设置读取与强制改密判断工具
 │   │   ├── system-event-buffer.ts # 系统看板进程内运行事件环形缓冲
 │   │   ├── theme-config.ts # 主题配置校验与解析工具
+│   │   ├── ttl-cache.ts  # 模块级 TTL 缓存
 │   │   ├── userDisplayName.ts # 同名用户消歧统一口径（仅在读用户参与统计）
 │   │   ├── telemetry.ts    # 遥测与错误追踪工具
 │   │   ├── user.ts         # 用户相关工具函数
@@ -1709,7 +1774,7 @@ app/assets/css/themes/
 
 ### 管理员
 
-1. 使用管理员账号登录（默认账号：admin，密码：admin123）
+1. 使用管理员账号登录（默认账号：admin，密码：admin123，首次登录需设置新密码）
 2. 进入管理后台，选择相应功能标签
 3. **排期管理**：可以看到左侧"待排歌曲"和右侧"播放顺序"
    - 通过拖拽将歌曲从左侧添加到右侧的排期列表

@@ -11,15 +11,8 @@ const parsePlayTimeId = (raw: unknown): number | null => {
   return Number.isInteger(num) && num > 0 ? num : null
 }
 
+import { recordAdminAudit } from '~~/server/utils/admin-audit'
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user || !['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-    throw createError({
-      statusCode: 403,
-      message: '需要歌曲管理员及以上权限'
-    })
-  }
-
   const body = await readBody(event)
   const fromDate = typeof body?.fromDate === 'string' ? body.fromDate.trim() : ''
   const toDate = typeof body?.toDate === 'string' ? body.toDate.trim() : ''
@@ -182,6 +175,12 @@ export default defineEventHandler(async (event) => {
         console.error('[Notification] 发送排期迁移通知失败:', error)
       })
     }
+
+    await recordAdminAudit(event, 'schedule.move-date', {
+      targetType: 'schedule',
+      targetId: `batch:${moveResult.movedCount}`,
+      summary: { fromDate, toDate, movedCount: moveResult.movedCount, skippedCount: moveResult.skippedCount }
+    })
 
     return {
       success: true,

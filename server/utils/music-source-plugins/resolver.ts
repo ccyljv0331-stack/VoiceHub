@@ -1,3 +1,4 @@
+import { hasAdminPermission } from '~~/app/utils/admin-permissions'
 import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '~/drizzle/db'
 import { schedules, songCollaborators, songs, musicSourcePlugins } from '~/drizzle/schema'
@@ -17,6 +18,20 @@ const failures = new Map<string, { count: number; until: number }>()
 const cache = new Map<string, { expires: number; result: any }>()
 const resolving = new Map<string, Promise<any>>()
 const CACHE_SIZE = 200
+
+// 加密音频格式浏览器无法解码，命中即跳过该候选继续尝试其它音质/插件
+const ENCRYPTED_AUDIO_EXTENSIONS = new Set([
+  '.mgg', '.mflac', '.mgg1', '.mflac1', '.qmc0', '.qmc3', '.qmcflac', '.qmcogg',
+  '.tkm', '.tkmflac', '.tkmogg', '.bkcmp3', '.bkcflac', '.bkcwma', '.bkcwav', '.bkcape',
+  '.ncm', '.kgm', '.kgma', '.vpr', '.kwm'
+])
+const isEncryptedAudioUrl = (url: string) => {
+  try {
+    const path = new URL(url).pathname.toLowerCase()
+    const dot = path.lastIndexOf('.')
+    return dot >= 0 && ENCRYPTED_AUDIO_EXTENSIONS.has(path.slice(dot))
+  } catch { return false }
+}
 
 export async function enabledCatalog(catalog?: string | null) {
   if (!catalog || !(MUSIC_SOURCE_PLATFORMS as readonly string[]).includes(catalog)) return true
@@ -45,8 +60,8 @@ export function readSelection(token: string, userId: number, platform?: string, 
 }
 
 // 无选择票据时按歌曲 ID 解析，可见性与播放列表保持一致：已正式发布排期、本人投稿/协作者、或歌曲管理角色
-async function resolvableBySongId(songId: number, user: { id: number; role: string }) {
-  if (['SONG_ADMIN', 'ADMIN', 'SUPER_ADMIN'].includes(user.role)) return true
+async function resolvableBySongId(songId: number, user: { id: number; role: string; perms?: string[] }) {
+  if ((hasAdminPermission(user, 'songs:read') || hasAdminPermission(user, 'schedule:read'))) return true
   const [own] = await db.select({ id: songs.id }).from(songs).where(and(eq(songs.id, songId), eq(songs.requesterId, user.id))).limit(1)
   if (own) return true
   const [collab] = await db.select({ id: songCollaborators.id }).from(songCollaborators).where(and(eq(songCollaborators.songId, songId), eq(songCollaborators.userId, user.id))).limit(1)
@@ -55,7 +70,7 @@ async function resolvableBySongId(songId: number, user: { id: number; role: stri
   return !!published
 }
 
-export async function requestTrack(body: any, user: { id: number; role: string }): Promise<PluginTrack> {
+export async function requestTrack(body: any, user: { id: number; role: string; perms?: string[] }): Promise<PluginTrack> {
   if (body.selectionToken) return readSelection(body.selectionToken, user.id)
   if (body.songId) {
     if (!Number.isSafeInteger(Number(body.songId)) || Number(body.songId) < 1) throw pluginError('PLUGIN_INVALID_CONFIG', 400)
@@ -168,13 +183,16 @@ export async function resolvePlugins(track: PluginTrack, quality: string, exclud
             const desired = artifact.capability.protocol === 'lx' ? ({ standard: '128k', high: '320k', super: 'flac', lossless: 'flac24bit' }[quality] || '320k') : quality
             const levels = artifact.capability.protocol === 'lx' ? artifact.capability.sources[source]?.qualities || [] : ['standard', 'high', 'super', 'lossless']
             const q = levels.includes(desired) ? desired : levels.includes('320k') ? '320k' : levels[0] || desired
-            for (const candidateQuality of [...new Set([q, artifact.capability.protocol === 'lx' ? '128k' : 'standard'])]) {
+            // 音质降级链：请求档 → 320k → 128k，低档可能返回加密格式而高档是普通音频
+            const candidates = artifact.capability.protocol === 'lx' ? [q, '320k', '128k'] : [q, 'standard']
+            for (const candidateQuality of [...new Set(candidates)]) {
               if (levels.length && !levels.includes(candidateQuality)) continue
               try {
                 const result = await call(artifact, 'musicUrl', { item, source, quality: candidateQuality }, budget)
                 const url = typeof result === 'string' ? result : result?.url
                 if (typeof url !== 'string' || !url) continue
                 networkUrl(url)
+                if (isEncryptedAudioUrl(url)) continue
                 const headers = result?.headers || (result?.userAgent ? { 'User-Agent': result.userAgent } : {})
                 if (!headers || typeof headers !== 'object' || Array.isArray(headers) || JSON.stringify(headers).length > 12000) continue
                 return { url, headers, quality: candidateQuality }
@@ -194,14 +212,16 @@ export async function resolvePlugins(track: PluginTrack, quality: string, exclud
       if (!current?.enabled || current.deletedAt) continue
       // preferProxy：客户端需要在页面里直接读取响应体（如批量下载），此时不能返回跨域直链
       const proxy = preferProxy || Object.keys(media.headers || {}).length > 0 || media.url.startsWith('http:')
-      const url = proxy ? `/api/music-source-plugins/media?ticket=${seal({ ...media, pluginId: row.id, catalog: track.catalog, userId }, 'media', 30 * 60 * 1000)}` : media.url
+      const url = proxy ? `/api/music-source-plugins/media?ticket=${seal({ ...media, pluginId: row.id, catalog: track.catalog, userId }, 'media', limits.mediaProxyMs)}` : media.url
       return { success: true, url, source: resolverId, pluginId: row.id, attempted, quality: media.quality, playbackMode: proxy ? 'proxy' : 'direct', more: false }
     } catch (error) {
       // 沙箱并发饱和（503）属容量问题，不计入熔断，否则高峰期会把健康插件集体拉黑 30 秒
       if ((error as any)?.statusCode === 503) continue
       const old = failures.get(resolverId)
       const count = (old?.count || 0) + 1
-      failures.set(resolverId, { count, until: count >= 3 ? getServerTimestamp() + 30000 : 0 })
+      const blocked = count >= 3
+      failures.set(resolverId, { count, until: blocked ? getServerTimestamp() + 30000 : 0 })
+      console.warn(`[插件音源] ${row.name} 解析失败（${count}/3）${blocked ? '，触发 30 秒熔断' : ''}:`, (error as any)?.data?.code || (error as Error)?.message || error)
       while (failures.size > 100) failures.delete(failures.keys().next().value!)
     }
   }

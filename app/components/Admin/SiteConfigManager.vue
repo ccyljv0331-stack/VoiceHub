@@ -17,7 +17,7 @@
           <RotateCcw :size="14" /> {{ locale.reset }}
         </button>
         <button
-          :disabled="loading || saving"
+          :disabled="loading || saving || !configLoaded || !can('system-settings:write')"
           class="flex items-center gap-2 px-8 py-2 bg-primary-hover hover:bg-primary text-text-primary text-xs font-black rounded-xl shadow-lg shadow-[var(--primary-glow)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           @click="saveConfig"
         >
@@ -36,9 +36,9 @@
       <p class="text-text-tertiary text-sm">{{ locale.loading }}</p>
     </div>
 
-    <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <fieldset v-else :disabled="!can('system-settings:write') || !configLoaded" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- 基础信息 -->
-      <section :class="cardClass">
+      <section v-if="canManageSensitiveSettings" :class="cardClass">
         <h3
           class="text-sm font-black text-text-primary uppercase tracking-widest flex items-center gap-2 border-b border-border-secondary pb-4"
         >
@@ -126,7 +126,7 @@
       </section>
 
       <!-- 视觉识别 -->
-      <section :class="cardClass">
+      <section v-if="canManageSensitiveSettings" :class="cardClass">
         <h3
           class="text-sm font-black text-text-primary uppercase tracking-widest flex items-center gap-2 border-b border-border-secondary pb-4"
         >
@@ -174,7 +174,7 @@
       </section>
 
       <!-- 主题设置 -->
-      <section v-if="isSuperAdmin" :class="cardClass">
+      <section v-if="canManageSensitiveSettings" :class="cardClass">
         <h3 class="text-sm font-black text-text-primary uppercase tracking-widest flex items-center gap-2 border-b border-border-secondary pb-4">
           <Palette :size="16" class="text-primary" /> {{ locale.themeSettings }}
         </h3>
@@ -222,6 +222,52 @@
         </div>
       </section>
 
+      <!-- 自定义样式 -->
+      <section v-if="canManageSensitiveSettings" :class="cardClass">
+        <h3
+          class="text-sm font-black text-text-primary uppercase tracking-widest flex items-center gap-2 border-b border-border-secondary pb-4"
+        >
+          <Brush :size="16" class="text-primary" /> {{ locale.customCssSection }}
+        </h3>
+        <div class="space-y-4">
+          <div class="pt-2">
+            <div
+              class="flex items-center justify-between p-3 bg-bg-primary-50 border border-border-secondary rounded-xl"
+            >
+              <div>
+                <p class="text-xs font-bold text-text-primary">{{ locale.customCssEnabled }}</p>
+                <p class="text-[10px] text-text-tertiary mt-0.5">{{ locale.customCssEnabledDesc }}</p>
+              </div>
+              <input
+                v-model="formData.customCssEnabled"
+                type="checkbox"
+                class="w-5 h-5 rounded border-border-secondary bg-bg-secondary cursor-pointer"
+              />
+            </div>
+          </div>
+          <div>
+            <label :class="labelClass">{{ locale.customCss }}</label>
+            <textarea
+              v-model="formData.customCss"
+              :rows="8"
+              :placeholder="locale.customCssPlaceholder"
+              :class="[inputClass, 'font-mono text-xs resize-y']"
+              :disabled="!formData.customCssEnabled"
+              :maxlength="CUSTOM_CSS_MAX_LENGTH"
+            />
+            <div class="flex items-start justify-between gap-3">
+              <p class="text-[10px] text-text-tertiary mt-1 leading-relaxed">{{ locale.customCssHint }}</p>
+              <p
+                class="text-[10px] font-mono shrink-0 whitespace-nowrap mt-1"
+                :class="customCssLength >= CUSTOM_CSS_MAX_LENGTH ? 'text-warning' : 'text-text-tertiary'"
+              >
+                {{ customCssLength }} / {{ CUSTOM_CSS_MAX_LENGTH }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- 投稿逻辑设置 -->
       <section :class="cardClass">
         <h3
@@ -258,7 +304,7 @@
             </div>
 
             <div
-              v-if="formData.enableSubmissionRemarks"
+              v-if="formData.enableSubmissionRemarks && canManageSensitiveSettings"
               class="ml-4 mr-2 mb-2 pl-4 border-l border-border-secondary space-y-2 transition-opacity"
             >
               <div
@@ -547,7 +593,7 @@
       </section>
 
       <!-- 安全与隐私设置 -->
-      <section :class="cardClass">
+      <section v-if="canManageSensitiveSettings" :class="cardClass">
         <h3
           class="text-sm font-black text-text-primary uppercase tracking-widest flex items-center gap-2 border-b border-border-secondary pb-4"
         >
@@ -949,6 +995,7 @@
 
       <!-- 投稿须知 -->
       <section
+        v-if="canManageSensitiveSettings"
         class="lg:col-span-2 bg-bg-secondary-40 border border-border-secondary rounded-2xl p-6 space-y-6"
       >
         <div class="flex items-center justify-between border-b border-border-secondary pb-4">
@@ -997,7 +1044,7 @@
       </section>
 
       <!-- 登录条款确认 -->
-      <section class="lg:col-span-2 legal-consent-panel">
+      <section v-if="canManageSensitiveSettings" class="lg:col-span-2 legal-consent-panel">
         <div class="legal-consent-header">
           <div class="legal-consent-heading">
             <h3 class="text-sm font-black text-text-primary flex items-center gap-2"><FileText :size="16" class="text-primary" /> {{ locale.legalConsentTitle }}</h3>
@@ -1040,8 +1087,8 @@
       </section>
 
       <!-- OAuth 第三方登录配置 -->
-      <OAuthConfigManager v-model="formData" class="lg:col-span-2" />
-    </div>
+      <OAuthConfigManager v-if="canManageSensitiveSettings" v-model="formData" class="lg:col-span-2" />
+    </fieldset>
   </div>
 </template>
 
@@ -1060,6 +1107,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Palette,
+  Brush,
   Star,
   Plus,
   CalendarRange
@@ -1084,14 +1132,20 @@ import {
 } from '~/utils/esaCaptcha'
 import { usePermissions } from '~/composables/usePermissions'
 import { THEMES } from '~/composables/useTheme'
+import { stripSuperAdminOnlySettingFields } from '~/utils/settingsPermissions'
+import { CUSTOM_CSS_MAX_LENGTH, trimCustomCss } from '~/utils/custom-css-policy'
 import OAuthConfigManager from './OAuthConfigManager.vue'
 
 const { showToast: showNotification } = useToast()
 const { refreshSiteConfig, captchaEnabled, captchaProvider, esaCaptchaScenes } = useSiteConfig()
 const { siteConfig: locale, theme: themeLocale } = useLocale()
-const { isSuperAdmin } = usePermissions()
+const { can } = usePermissions()
+const canManageSensitiveSettings = computed(() => can('system-settings:secrets'))
+const configLoaded = ref(false)
 const { localize: localizeServerError } = useServerErrors()
 const themeOptions = computed(() => THEMES.map((value) => ({ value, label: themeLocale.value?.[value] || value })))
+
+const customCssLength = computed(() => trimCustomCss(formData.value.customCss).length)
 
 const setDefaultTheme = (theme) => {
   formData.value.defaultTheme = theme
@@ -1376,6 +1430,8 @@ const formData = ref({
   gonganNumber: '',
   statisticsCode: '',
   statisticsCodeEnabled: false,
+  customCss: '',
+  customCssEnabled: false,
   legalConsentEnabled: false,
   legalConsentDisplayMode: 'modal',
   legalConsentUpdatedDate: '',
@@ -1544,6 +1600,8 @@ const loadConfig = async () => {
       gonganNumber: data.gonganNumber || '',
       statisticsCode: data.statisticsCode || '',
       statisticsCodeEnabled: !!data.statisticsCodeEnabled,
+      customCss: data.customCss || '',
+      customCssEnabled: !!data.customCssEnabled,
       legalConsentEnabled: !!data.legalConsentEnabled,
       legalConsentDisplayMode: ['modal', 'checkbox'].includes(data.legalConsentDisplayMode) ? data.legalConsentDisplayMode : 'modal',
       legalConsentUpdatedDate: data.legalConsentUpdatedDate || '',
@@ -1625,6 +1683,7 @@ const loadConfig = async () => {
     }
 
     originalData.value = JSON.parse(JSON.stringify(formData.value))
+    configLoaded.value = true
   } catch (error) {
     console.error('Failed to load site config:', error)
     showNotification(locale.value?.loadFailed || '系统设置加载失败', 'error')
@@ -1635,8 +1694,9 @@ const loadConfig = async () => {
 
 // 保存配置
 const saveConfig = async () => {
+  if (!can('system-settings:write') || !configLoaded.value) return
   try {
-    if (isSuperAdmin.value) {
+    if (canManageSensitiveSettings.value) {
       if (!formData.value.enabledThemes.includes(formData.value.defaultTheme)) {
         showNotification(locale.value?.defaultThemeMustBeEnabled || '默认主题必须处于启用状态', 'error')
         return
@@ -1651,8 +1711,11 @@ const saveConfig = async () => {
     const schoolLogoHomeLightUrl = schoolLogoHomeDarkUrl
       ? (formData.value.schoolLogoHomeLightUrl || '').trim()
       : ''
+    // 与服务端口径一致：仅在启用时提交，且提交 trim 后的值，避免刷新前显示与库不一致
+    const customCssDraft = trimCustomCss(formData.value.customCss)
     const configToSave = {
       ...formData.value,
+      ...(formData.value.customCssEnabled ? { customCss: customCssDraft } : {}),
       legalConsentDocuments: JSON.stringify(formData.value.legalConsentDocuments),
       esaCaptchaScenes: JSON.stringify(formData.value.esaCaptchaScenes),
       schoolLogoHomeUrl: joinThemeLogoUrl(
@@ -1681,25 +1744,27 @@ const saveConfig = async () => {
       globalMonthlySubmissionLimit: normalizeGlobalSubmissionLimit(
         formData.value.globalMonthlySubmissionLimit
       ),
-      ...(isSuperAdmin.value
+      ...(canManageSensitiveSettings.value
         ? {
             defaultTheme: formData.value.defaultTheme,
             enabledThemes: JSON.stringify(formData.value.enabledThemes)
           }
         : {})
     }
-    if (!isSuperAdmin.value) {
-      delete configToSave.defaultTheme
-      delete configToSave.enabledThemes
-    }
-    delete configToSave.schoolLogoHomeDarkUrl
-    delete configToSave.schoolLogoHomeLightUrl
+    // 超管专属字段不提交，避免普通管理员保存整表单被接口拒绝
+    const requestPayload = canManageSensitiveSettings.value
+      ? { ...configToSave }
+      : stripSuperAdminOnlySettingFields(configToSave)
+    delete requestPayload.schoolLogoHomeDarkUrl
+    delete requestPayload.schoolLogoHomeLightUrl
+    // 关闭开关时不提交该键：库里遗留的超限值不应让整表单被接口拒绝
+    if (!formData.value.customCssEnabled) delete requestPayload.customCss
 
     const response = await fetch('/api/admin/system-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify(configToSave)
+      body: JSON.stringify(requestPayload)
     })
 
     if (!response.ok) {
@@ -1727,6 +1792,7 @@ const saveConfig = async () => {
       ...formData.value,
       siteTitle: configToSave.siteTitle,
       siteLogoUrl: configToSave.siteLogoUrl,
+      ...(formData.value.customCssEnabled ? { customCss: customCssDraft } : {}),
       legalConsentUpdatedDate:
         savedSettings && typeof savedSettings.legalConsentUpdatedDate === 'string'
           ? savedSettings.legalConsentUpdatedDate

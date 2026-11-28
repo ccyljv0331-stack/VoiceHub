@@ -25,7 +25,8 @@ import {
 } from '~~/server/utils/submissionLimit'
 import { getClientIP } from '~~/server/utils/ip-utils'
 import { getBeijingTimeISOString, getWeekdayLabel } from '~/utils/timeUtils'
-import { getSystemSettingsCached } from '~~/server/utils/system-settings-helper'
+import { getRolePermissionTemplatesCached, getSystemSettingsCached } from '~~/server/utils/system-settings-helper'
+import { hasAdminPermission, resolveEffectivePermissions } from '~~/app/utils/admin-permissions'
 import { getServerDate } from '~~/server/utils/serverTime'
 import {
   getWeekdayOfDateString,
@@ -41,6 +42,7 @@ import { readSelection } from '~~/server/utils/music-source-plugins/resolver'
 type SongRequestUser = {
   id: number
   role: string
+  perms?: string[]
 }
 
 export type SongRequestOptions = {
@@ -52,7 +54,7 @@ export type SongRequestOptions = {
   enforceRequiredPlaySlot?: boolean
 }
 
-const songRequestBodySchema = z.object({
+export const songRequestBodySchema = z.object({
   selectionToken: z.string().max(200000).optional(),
   title: z.string().trim().min(1, '歌曲名称不能为空').max(200, '歌曲名称不能超过200个字符'),
   artist: z.string().trim().min(1, '艺术家不能为空').max(200, '艺术家不能超过200个字符'),
@@ -66,7 +68,11 @@ const songRequestBodySchema = z.object({
     .nullable(),
   musicPlatform: z.string().trim().max(50, '音乐平台标识不能超过50个字符').optional().nullable(),
   musicId: z.string().trim().max(200, '音乐 ID 不能超过200个字符').optional().nullable(),
-  bilibiliCid: z.string().trim().max(100, 'Bilibili CID 不能超过100个字符').optional().nullable(),
+  // 上游分P接口返回的 cid 为数字，统一转成字符串
+  bilibiliCid: z.preprocess(
+    (value) => (typeof value === 'number' && Number.isFinite(value) ? String(value) : value),
+    z.string().trim().max(100, 'Bilibili CID 不能超过100个字符').optional().nullable()
+  ),
   bilibiliPage: z.union([z.string(), z.number()]).optional().nullable(),
   playUrl: z.string().trim().max(2000, '播放链接不能超过2000个字符').optional().nullable(),
   durationSeconds: z.number().int().min(SONG_DURATION_MIN_SECONDS, '时长不能为负数').max(SONG_DURATION_MAX_SECONDS, '时长不能超过2小时').optional().nullable(),
@@ -126,7 +132,18 @@ export async function requestSongForUser(
     const currentSemester = await getCurrentSemesterName()
 
     const systemSettingsData = await getSystemSettingsCached()
-    const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'SONG_ADMIN'].includes(user.role)
+    let permissionUser = user
+    if (!Array.isArray(user.perms)) {
+      const [storedUser] = await db.select({
+        id: users.id, role: users.role, permissions: users.permissions, status: users.status
+      }).from(users).where(eq(users.id, user.id)).limit(1)
+      if (!storedUser || storedUser.status !== 'active') {
+        throw createApiError(401, SERVER_ERROR_CODES.AUTH_UNAUTHORIZED, '账号不可用')
+      }
+      permissionUser = { ...storedUser,
+        perms: resolveEffectivePermissions(storedUser, await getRolePermissionTemplatesCached()) }
+    }
+    const isAdmin = hasAdminPermission(permissionUser, 'songs:bypass-limits')
     const restrictionPolicy = resolveSubmissionRestrictionPolicy(systemSettingsData)
     const semesterRestrictionOn = restrictionPolicy.mode === 'semester' && !isAdmin
 

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { getClientIP, isPrivateOrLoopbackAddress } from '~~/server/utils/ip-utils'
 
 const neteaseEnhancedApiPromise = import('@neteasecloudmusicapienhanced/api').then((mod) => {
   return (mod.default || {}) as Record<string, (params: Record<string, any>) => Promise<any>>
@@ -10,6 +11,8 @@ const neteaseEnhancedApiPromise = import('@neteasecloudmusicapienhanced/api').th
 const NETEASE_CALL_TIMEOUT_MS = 12000
 // xeapi 公钥预热同样可能挂起，且模块级 promise 被所有请求共用，必须单独封顶
 const NETEASE_CONFIG_TIMEOUT_MS = 5000
+// 整体截止时间到期的机器可读标记，用于识别此类预期失败
+const NETEASE_UPSTREAM_TIMEOUT_CODE = 'NETEASE_UPSTREAM_TIMEOUT'
 
 async function withDeadline<T>(task: Promise<T>, ms: number, endpoint: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -19,6 +22,7 @@ async function withDeadline<T>(task: Promise<T>, ms: number, endpoint: string): 
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(createError({
           statusCode: 504,
+          statusMessage: NETEASE_UPSTREAM_TIMEOUT_CODE,
           message: `网易云接口 ${endpoint} 调用超时`
         })), ms)
       })
@@ -39,6 +43,8 @@ const allowedEndpoints = new Map<string, Set<string>>([
   ['album', new Set(['GET'])],
   ['lyric', new Set(['GET'])],
   ['lyric/new', new Set(['GET'])],
+  // 播客节目列表
+  ['dj/program', new Set(['GET'])],
   // 听歌识曲（音频指纹走请求体，仅 POST）
   ['audio/match', new Set(['POST'])],
   // 评论
@@ -158,6 +164,16 @@ export default defineEventHandler(async (event) => {
 
   const params = { ...queryParams, ...bodyParams }
 
+  // 扫码链路透传访客真实 IP，网易云按访客而非服务器出口判定地区
+  if (endpointPath.startsWith('login/qr/')) {
+    // 客户端传入的 realIP 一律丢弃，避免该代理成为任意 IP 伪造入口
+    delete params.realIP
+    const clientIp = getClientIP(event)
+    if (clientIp !== 'unknown' && !isPrivateOrLoopbackAddress(clientIp)) {
+      params.realIP = clientIp
+    }
+  }
+
   // 等待 xeapi 公钥等配置就绪：超时或失败都继续，让上游错误以有界的失败返回，而不是无限等待
   await withDeadline(ensureNcmConfig(), NETEASE_CONFIG_TIMEOUT_MS, 'generateConfig').catch((error: unknown) => {
     console.warn(`[Netease] xeapi 配置初始化超时: ${error instanceof Error ? error.message : String(error)}`)
@@ -177,10 +193,15 @@ export default defineEventHandler(async (event) => {
     const upstream = error?.body ?? null
     const upstreamMessage = upstream?.msg || upstream?.message || error?.message
     console.warn(`[Netease] ${endpointPath} 调用失败: ${error?.status || 500} ${upstreamMessage}`)
-    throw createError({
+    const wrapped = createError({
       statusCode: error?.statusCode || error?.status || 500,
       message: upstreamMessage || '网易云接口调用失败',
       data: { endpoint: endpointPath, upstream }
     })
+    // 截止时间到期的标记需要透传，否则重包后 Sentry 过滤无法识别
+    if (error?.statusMessage === NETEASE_UPSTREAM_TIMEOUT_CODE) {
+      wrapped.statusMessage = NETEASE_UPSTREAM_TIMEOUT_CODE
+    }
+    throw wrapped
   }
 })
