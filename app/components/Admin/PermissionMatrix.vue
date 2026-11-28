@@ -64,6 +64,9 @@
               <th class="px-4 py-3 text-[10px] font-black text-text-disabled uppercase tracking-wider">
                 {{ locale.code }}
               </th>
+              <th scope="col" class="w-44 px-2 py-3 text-[10px] font-black text-text-disabled uppercase tracking-wider">
+                {{ locale.description }}
+              </th>
               <th class="px-2 py-3 text-[10px] font-black text-text-disabled uppercase tracking-wider text-right">
                 {{ locale.holders }}
               </th>
@@ -84,7 +87,7 @@
           <tbody v-for="group in matrix.groups" :key="group.domain">
             <tr class="bg-bg-tertiary-30">
               <td
-                :colspan="2 + roles.length"
+                :colspan="3 + roles.length"
                 class="px-4 py-2 text-[10px] font-black text-text-secondary uppercase tracking-[0.14em]"
               >
                 {{ domainLabel(group.domain) }}
@@ -111,6 +114,11 @@
                   />
                 </div>
               </td>
+              <td class="px-2 py-2 text-[11px] text-text-secondary">
+                <span class="block max-w-40 truncate" :title="permissionDescription(code)">
+                  {{ permissionDescription(code) }}
+                </span>
+              </td>
               <td class="px-2 py-2 text-right text-[11px] font-bold text-text-tertiary">
                 {{ matrix.codeHolders[code] || 0 }}
               </td>
@@ -120,7 +128,7 @@
                     type="checkbox"
                     class="w-3.5 h-3.5 rounded border-border-secondary bg-bg-secondary cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                     :checked="holds(role, code)"
-                    :disabled="saving || !can(code)"
+                    :disabled="saving || !canToggle(role, code)"
                     @change="toggle(role, code)"
                   >
                 </label>
@@ -219,7 +227,7 @@ import InputField from '~/components/UI/Common/InputField.vue'
 import { useToast } from '~/composables/useToast'
 import { useLocale } from '~/utils/locale'
 import { useLocaleText, useServerErrors } from '~/composables/useLocaleText'
-import { hasPermission, isValidRoleKey, toggleExplicitPermission } from '~/utils/admin-permissions'
+import { hasPermission, isValidRoleKey, SUPER_ADMIN_ROLE, toggleExplicitPermission } from '~/utils/admin-permissions'
 import { usePermissions } from '~/composables/usePermissions'
 import { useAuth } from '~/composables/useAuth'
 
@@ -240,6 +248,7 @@ const matrix = ref({
   codeHolders: {},
   holdersByRole: {},
   protectedCodes: [],
+  recoverableSuperAdminCodes: [],
   customizedRoles: [],
   explicitGrantUsers: 0,
   holderTotal: 0
@@ -264,9 +273,15 @@ const roleLabel = (role) => roleLabels.value[role] || role
 const domainLabel = (domain) =>
   locale.value?.domains?.[domain] || getLocaleMessage('domainFallback', domain)
 
+const permissionDescription = (code) =>
+  locale.value.permissionDescriptions?.[code] || locale.value.descriptionUnavailable
+
 const isProtected = (code) => matrix.value.protectedCodes.includes(code)
 
 const holds = (role, code) => hasPermission(draft.value[role] || [], code)
+const canToggle = (role, code) => can('priv:role-template') && (
+  can(code) || (role === SUPER_ADMIN_ROLE && matrix.value.recoverableSuperAdminCodes?.includes(code))
+)
 
 const differsFromDefault = (code) =>
   matrix.value.roles.some(
@@ -340,8 +355,12 @@ const metrics = computed(() => [
 ])
 
 const toggle = (role, code) => {
-  if (!can(code)) return
-  draft.value[role] = toggleExplicitPermission([], draft.value[role] || [], code)
+  if (saving.value || !canToggle(role, code)) return
+  const template = draft.value[role] || []
+  // 保留超管模板的原授权，取消勾选时记录单项拒绝，以便恢复。
+  draft.value[role] = role === SUPER_ADMIN_ROLE && template.includes(code) && hasPermission(template, code)
+    ? [...template, `!${code}`]
+    : toggleExplicitPermission([], template, code)
 }
 
 const resetToDefault = () => {

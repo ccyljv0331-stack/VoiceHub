@@ -54,6 +54,16 @@
               :class="inputClass"
             />
           </div>
+          <div v-if="canManageOrganizationLabels" class="space-y-2">
+            <p :class="labelClass">{{ locale.organizationLabel }}</p>
+            <label for="organization-label-zh" class="block text-xs text-text-secondary">{{ locale.organizationLabelZh }}</label>
+            <input id="organization-label-zh" v-model="formData.organizationLabelZh" type="text"
+              :class="inputClass" :maxlength="ORGANIZATION_LABEL_MAX_LENGTH" :placeholder="defaultOrganizationLabels.zh" />
+            <label for="organization-label-en" class="block text-xs text-text-secondary">{{ locale.organizationLabelEn }}</label>
+            <input id="organization-label-en" v-model="formData.organizationLabelEn" type="text"
+              :class="inputClass" :maxlength="ORGANIZATION_LABEL_MAX_LENGTH" :placeholder="defaultOrganizationLabels.en" />
+            <p class="text-xs text-text-tertiary">{{ locale.organizationLabelHint }}</p>
+          </div>
           <div>
             <label :class="labelClass">{{ locale.icpNumber }}</label>
             <input
@@ -140,6 +150,19 @@
               type="text"
               :placeholder="locale.siteLogoPlaceholder"
               :class="inputClass"
+            />
+            <input
+              type="file"
+              :aria-label="locale.siteLogoUpload"
+              accept="image/png,image/jpeg,image/webp"
+              :class="inputClass"
+              @change="uploadSiteLogo"
+            />
+            <img
+              v-if="formData.siteLogoUrl.startsWith('data:image/')"
+              :src="formData.siteLogoUrl"
+              :alt="locale.siteLogoUpload"
+              class="mt-2 h-12 max-w-full object-contain"
             />
           </div>
           <div>
@@ -304,7 +327,7 @@
             </div>
 
             <div
-              v-if="formData.enableSubmissionRemarks && canManageSensitiveSettings"
+              v-if="formData.enableSubmissionRemarks"
               class="ml-4 mr-2 mb-2 pl-4 border-l border-border-secondary space-y-2 transition-opacity"
             >
               <div
@@ -317,7 +340,7 @@
                 <input
                   v-model="formData.submissionNoteRequiresApproval"
                   type="checkbox"
-                  :disabled="!formData.enableSubmissionRemarks"
+                  :disabled="!can('system-settings:write')"
                   class="w-5 h-5 rounded border-border-secondary bg-bg-secondary cursor-pointer disabled:cursor-not-allowed"
                 />
               </div>
@@ -1131,6 +1154,8 @@ import {
   resolveEsaCaptchaSceneId
 } from '~/utils/esaCaptcha'
 import { usePermissions } from '~/composables/usePermissions'
+import { PRIV_ORGANIZATION_LABEL } from '~/utils/admin-permissions'
+import { ORGANIZATION_LABEL_FIELDS, ORGANIZATION_LABEL_MAX_LENGTH, organizationLabels } from '~/utils/organization-labels'
 import { THEMES } from '~/composables/useTheme'
 import { stripSuperAdminOnlySettingFields } from '~/utils/settingsPermissions'
 import { CUSTOM_CSS_MAX_LENGTH, trimCustomCss } from '~/utils/custom-css-policy'
@@ -1141,6 +1166,8 @@ const { refreshSiteConfig, captchaEnabled, captchaProvider, esaCaptchaScenes } =
 const { siteConfig: locale, theme: themeLocale } = useLocale()
 const { can } = usePermissions()
 const canManageSensitiveSettings = computed(() => can('system-settings:secrets'))
+const canManageOrganizationLabels = computed(() => can(PRIV_ORGANIZATION_LABEL))
+const defaultOrganizationLabels = organizationLabels()
 const configLoaded = ref(false)
 const { localize: localizeServerError } = useServerErrors()
 const themeOptions = computed(() => THEMES.map((value) => ({ value, label: themeLocale.value?.[value] || value })))
@@ -1418,8 +1445,26 @@ watch([esaTestSceneId, esaTestReady], () => {
   esaTestFailedThisAttempt = false
 })
 
+const uploadSiteLogo = (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  event.target.value = ''
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 256 * 1024) {
+    showNotification(locale.value.siteLogoUploadInvalid, 'error')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (typeof reader.result === 'string') formData.value.siteLogoUrl = reader.result
+  }
+  reader.onerror = () => showNotification(locale.value.siteLogoUploadInvalid, 'error')
+  reader.readAsDataURL(file)
+}
+
 const formData = ref({
   siteTitle: '',
+  organizationLabelZh: '',
+  organizationLabelEn: '',
   siteLogoUrl: '',
   schoolLogoHomeDarkUrl: '',
   schoolLogoHomeLightUrl: '',
@@ -1590,6 +1635,8 @@ const loadConfig = async () => {
     const schoolLogoHome = splitThemeLogoUrl(data.schoolLogoHomeUrl)
     formData.value = {
       siteTitle: data.siteTitle || '',
+      organizationLabelZh: data.organizationLabelZh || '',
+      organizationLabelEn: data.organizationLabelEn || '',
       siteLogoUrl: data.siteLogoUrl || '',
       schoolLogoHomeDarkUrl: schoolLogoHome.dark,
       schoolLogoHomeLightUrl: schoolLogoHome.light,
@@ -1755,6 +1802,12 @@ const saveConfig = async () => {
     const requestPayload = canManageSensitiveSettings.value
       ? { ...configToSave }
       : stripSuperAdminOnlySettingFields(configToSave)
+    for (const field of ORGANIZATION_LABEL_FIELDS) {
+      if (!canManageOrganizationLabels.value || configToSave[field] === originalData.value?.[field]) delete requestPayload[field]
+    }
+    if (configToSave.submissionNoteRequiresApproval === originalData.value?.submissionNoteRequiresApproval) {
+      delete requestPayload.submissionNoteRequiresApproval
+    }
     delete requestPayload.schoolLogoHomeDarkUrl
     delete requestPayload.schoolLogoHomeLightUrl
     // 关闭开关时不提交该键：库里遗留的超限值不应让整表单被接口拒绝
@@ -1791,6 +1844,9 @@ const saveConfig = async () => {
     formData.value = {
       ...formData.value,
       siteTitle: configToSave.siteTitle,
+      organizationLabelZh: savedSettings?.organizationLabelZh ?? formData.value.organizationLabelZh,
+      organizationLabelEn: savedSettings?.organizationLabelEn ?? formData.value.organizationLabelEn,
+      submissionNoteRequiresApproval: savedSettings?.submissionNoteRequiresApproval ?? formData.value.submissionNoteRequiresApproval,
       siteLogoUrl: configToSave.siteLogoUrl,
       ...(formData.value.customCssEnabled ? { customCss: customCssDraft } : {}),
       legalConsentUpdatedDate:

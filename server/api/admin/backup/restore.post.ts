@@ -1,5 +1,6 @@
 import { normalizeSubmittedTemplates } from '~~/server/utils/permission-admin'
-import { normalizePermissionTokens } from '~~/app/utils/admin-permissions'
+import { hasAdminPermission, normalizePermissionTokens, PRIV_ORGANIZATION_LABEL } from '~~/app/utils/admin-permissions'
+import { ORGANIZATION_LABEL_FIELDS, parseOrganizationLabel } from '~/utils/organization-labels'
 import { recordAdminAudit } from '~~/server/utils/admin-audit'
 import { defineEventHandler, readBody, readMultipartFormData } from 'h3'
 import { db } from '~/drizzle/db'
@@ -42,6 +43,7 @@ import { restoreAstrbotBindings } from '~~/server/utils/astrbot-backup'
 import { validateThemeConfig } from '~~/server/utils/theme-config'
 import { createApiError } from '~~/server/utils/apiError'
 import { clearDefaultPlayTime } from '~~/server/utils/play-time-default'
+import { readBroadcastPolicyBackup } from '~~/server/utils/play-slot'
 import { SERVER_ERROR_CODES } from '~~/server/config/constants'
 import { normalizeScheduleVisibilitySettings } from '~~/server/utils/system-settings-defaults'
 import { syncAllSequences } from '~~/server/utils/sequence-sync'
@@ -1044,7 +1046,7 @@ export default defineEventHandler(async (event) => {
 
                       case 'playTimes':
                         // 动态构建播放时段数据，自动跳过不存在的字段
-                        const playTimeData: any = {}
+                        const playTimeData: any = readBroadcastPolicyBackup(record)
                         const playTimeFields = ['name', 'startTime', 'endTime', 'description', 'weekdays']
 
                         playTimeFields.forEach((field) => {
@@ -1215,6 +1217,16 @@ export default defineEventHandler(async (event) => {
                         break
 
                       case 'systemSettings':
+                        if (hasAdminPermission(user, PRIV_ORGANIZATION_LABEL)) {
+                          for (const field of ORGANIZATION_LABEL_FIELDS) {
+                            if (!Object.hasOwn(record, field)) continue
+                            const label = parseOrganizationLabel(record[field])
+                            if (label !== null) record[field] = label
+                            else delete record[field]
+                          }
+                        } else {
+                          for (const field of ORGANIZATION_LABEL_FIELDS) delete record[field]
+                        }
                         // 动态构建系统设置数据，自动跳过不存在的字段
                         let systemSettingsData: any = {}
                         const systemSettingsFields = [
@@ -1225,6 +1237,7 @@ export default defineEventHandler(async (event) => {
                           'enabledThemes',
                           'telemetryEnabled',
                           'siteTitle',
+                          ...ORGANIZATION_LABEL_FIELDS,
                           'siteLogoUrl',
                           'schoolLogoHomeUrl',
                           'schoolLogoPrintUrl',

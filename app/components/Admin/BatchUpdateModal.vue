@@ -1421,7 +1421,7 @@ const parseExcelData = (jsonData) => {
     const rawUsername = getRowValue(row, columnKeys.username, ['用户名', 'username'])
     const rawName = getRowValue(row, columnKeys.name, ['姓名', 'name'])
     const rawGrade = getRowValue(row, columnKeys.grade, ['年级', 'grade'])
-    const rawClass = getRowValue(row, columnKeys.class, ['班级', 'class'])
+    const rawClass = getRowValue(row, columnKeys.class, ['班级', 'Class', 'class', '学院', 'College', 'college'])
     const rawExplicitNewUsername = getRowValue(row, columnKeys.newUsername, ['新用户名', 'new_username'])
     const username = rawUsername != null ? String(rawUsername).trim() : ''
     const name = rawName != null ? String(rawName).trim().toLowerCase() : ''
@@ -1579,8 +1579,8 @@ const loadXLSX = async () => {
     }
 
     const script = document.createElement('script')
-    // SheetJS 官方发布源，npm 上的 xlsx 包已停更（停留在 0.18.5）
-    script.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js'
+    // 使用站内的 SheetJS 资源，支持离线导入。
+    script.src = '/vendor/sheetjs/xlsx.full.min.js'
     // 加载源完整性校验值，来源变更时须同步重算
     script.crossOrigin = 'anonymous'
     script.integrity = 'sha256-zAFRMKqFIefwiPiImOupSczcv7ON8L0Sm0S3Jzw6b0E='

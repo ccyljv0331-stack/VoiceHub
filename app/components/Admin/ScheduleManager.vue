@@ -845,14 +845,7 @@
               </div>
               <div class="h-6 w-[1px] bg-bg-tertiary mx-1" />
               <button
-                :disabled="(!canPublish) || !can('schedule:write')"
-                class="flex items-center gap-2 px-4 py-2 bg-success-10 hover:bg-success-20 text-success text-[10px] font-black rounded-xl border border-success-20 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
-                @click="publishSchedule"
-              >
-                <Send class="w-3 h-3" /> {{ locale.publishSchedule }}
-              </button>
-              <button
-                :disabled="(!hasChanges) || !can('schedule:write')"
+                :disabled="!canPublish || !can('schedule:write')"
                 class="flex items-center gap-2 px-5 py-2 bg-primary-hover hover:bg-primary text-text-primary text-[10px] font-black rounded-xl shadow-lg shadow-[var(--primary-glow)] transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
                 @click="saveSequence"
               >
@@ -1174,15 +1167,6 @@
         </button>
         <button
           class="w-12 shrink-0 flex flex-col items-center justify-center gap-0.5 py-1.5 bg-bg-secondary border border-border-secondary text-primary rounded-lg active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="(!canPublish) || !can('schedule:write')"
-          :title="locale.publishOnly"
-          @click="publishSchedule"
-        >
-          <Send class="w-4 h-4" />
-          <span class="text-[9px] font-bold whitespace-nowrap">{{ locale.publishScheduleShort }}</span>
-        </button>
-        <button
-          class="w-12 shrink-0 flex flex-col items-center justify-center gap-0.5 py-1.5 bg-bg-secondary border border-border-secondary text-primary rounded-lg active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="(refreshingAllDurations.running) || !can('songs:write')"
           :title="refreshingAllDurations.running ? `${locale.refreshPageDurations} (${refreshingAllDurations.progress})` : locale.refreshPageDurations"
           @click="refreshAllDurations"
@@ -1203,7 +1187,7 @@
 
     <!-- 主要操作 -->
     <button
-      :disabled="(!hasChanges) || !can('schedule:write')"
+      :disabled="!canPublish || !can('schedule:write')"
       class="shrink-0 px-3 py-2 bg-primary-hover hover:bg-primary text-text-primary text-[10px] font-black uppercase tracking-wider rounded-lg shadow-lg shadow-[var(--primary-glow)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-0.5"
       @click="saveSequence"
     >
@@ -2084,6 +2068,7 @@ import { convertToHttps, getCoverThumbUrl, getNeteaseCookie } from '~/utils/url'
 import { useLocale } from '~/utils/locale'
 import { useServerErrors } from '~/composables/useLocaleText'
 import { formatDuration, addDaysToString, getDaysBetween } from '~/utils/timeUtils'
+import { summarizeScheduleDuration } from '~/utils/schedule-duration'
 import { BUILTIN_PLATFORMS, getPlatformDisplayName } from '~/utils/platforms'
 import {
   autoSchedule,
@@ -2965,12 +2950,7 @@ const replayRequests = ref([])
 const scheduledSongIds = ref(new Set())
 
 // 已排期歌曲的总时长（秒）
-const scheduledTotalDuration = computed(() => {
-  return localScheduledSongs.value.reduce((sum, s) => {
-    const dur = s.song && typeof s.song.durationSeconds === 'number' ? s.song.durationSeconds : 0
-    return sum + dur
-  }, 0)
-})
+const scheduledTotalDuration = computed(() => summarizeScheduleDuration(localScheduledSongs.value).seconds)
 
 // 计算是否有未发布的草稿
 const hasUnpublishedDrafts = computed(() => {
@@ -2979,7 +2959,7 @@ const hasUnpublishedDrafts = computed(() => {
 
 // 计算是否有变化或有未发布的草稿
 const canPublish = computed(() => {
-  return (hasChanges.value && localScheduledSongs.value.length > 0) || hasUnpublishedDrafts.value
+  return hasChanges.value || hasUnpublishedDrafts.value
 })
 
 // 草稿相关数据
@@ -4904,8 +4884,9 @@ const updateLocalScheduledSongs = () => {
   console.log('当天已发布排期:', todaySchedules.length)
   console.log('当天草稿排期:', todayDrafts.length)
 
-  // 合并已发布和草稿排期
-  let allSchedules = [...todaySchedules, ...todayDrafts]
+  // 每个时段优先显示草稿，公示版保留在数据库中。
+  const draftSlots = new Set(todayDrafts.map((draft) => draft.playTimeId ?? null))
+  let allSchedules = [...todaySchedules.filter((item) => !draftSlots.has(item.playTimeId ?? null)), ...todayDrafts]
 
   // 如果选择了特定播出时段，进行过滤
   if (selectedPlayTime.value) {
@@ -5081,23 +5062,23 @@ const getPlayTimeConflict = (song) => {
   }
 }
 
-// 手工加入排期前校验期望时段约束，返回 true 表示允许加入
-const canAddToSchedule = (song) => {
+// 跨时段操作在确认后提交，并核对排期视图是否仍是发起确认时的视图。
+const confirmSchedulePlacement = (song, apply) => {
   const conflict = getPlayTimeConflict(song)
-  if (!conflict) return true
-  if (window.$showNotification) {
-    const name = conflict.preferredPlayTimeName || `时段#${conflict.preferredPlayTimeId}`
-    window.$showNotification(
-      callLocale(
-        'messages.playTimeConstraintViolation',
-        `《${song?.title || '该歌曲'}》指定了播出时段「${name}」，只能排到该时段`,
-        song?.title || '',
-        name
-      ),
-      'warning'
-    )
+  if (!conflict) return apply()
+  const playDate = selectedDate.value
+  const semester = selectedSemester.value
+  const text = locale.value.confirmations
+  const target = conflict.currentPlayTimeId ? getPlayTimeName(conflict.currentPlayTimeId) : locale.value.allPlayTimes
+  confirmDialogTitle.value = text.placementOverrideTitle
+  confirmDialogMessage.value = text.placementOverride(conflict.preferredPlayTimeName, target)
+  confirmDialogType.value = 'warning'
+  confirmDialogConfirmText.value = text.placementOverrideConfirm
+  confirmAction.value = () => {
+    const currentSlot = selectedPlayTime.value ? Number(selectedPlayTime.value) : null
+    if (selectedDate.value === playDate && selectedSemester.value === semester && currentSlot === conflict.currentPlayTimeId) apply()
   }
-  return false
+  showConfirmDialog.value = true
 }
 
 // 从拖拽数据中查找歌曲（优先查 songs/replayRequests，再回退到 pool）
@@ -5144,87 +5125,46 @@ const findSongFromDragData = (dragData) => {
 // 从拖拽数据中提取歌曲并添加到排期列表末尾（共享逻辑）
 const addSongToScheduleFromDrag = (event) => {
   const { song, songId } = findSongFromDragData(JSON.parse(event.dataTransfer.getData('text/plain')) || {})
-  if (!song) return
-
-  const existingIndex = localScheduledSongs.value.findIndex((s) => s.song.id === songId)
-  if (existingIndex !== -1) return
-
-  if (!canAddToSchedule(song)) return
-
-  const insertIndex = localScheduledSongs.value.length
-
-  const newSchedule = {
-    id: Date.now(),
-    replayRequestId: song.replayRequestId || null,
-    song: song,
-    playDate: selectedDate.value,
-    sequence: insertIndex + 1,
-    isNew: true,
-    isLocalOnly: true
-  }
-
-  scheduledSongIds.value.add(songId)
-  setSongScheduledFlag(songId, true)
-  localScheduledSongs.value.push(newSchedule)
-  hasChanges.value = true
+  placeSongInSchedule(song, songId)
 }
 
 // 从拖拽数据中提取歌曲并插入到指定位置（共享逻辑）
 const insertSongToScheduleAt = (event, dropIndex) => {
   const dragData = JSON.parse(event.dataTransfer.getData('text/plain'))
   const { song, songId } = findSongFromDragData(dragData)
-  if (!song) return
-
-  const existingIndex = localScheduledSongs.value.findIndex((s) => s.song.id === songId)
-  if (existingIndex !== -1) return
-
-  if (!canAddToSchedule(song)) return
-
-  const newSchedule = {
-    id: Date.now(),
-    replayRequestId: song.replayRequestId || null,
-    song: song,
-    playDate: selectedDate.value,
-    sequence: dropIndex + 1,
-    isNew: true
-  }
-
-  scheduledSongIds.value.add(songId)
-  setSongScheduledFlag(songId, true)
-
-  const newOrder = [...localScheduledSongs.value]
-  newOrder.splice(dropIndex, 0, newSchedule)
-  newOrder.forEach((item, index) => {
-    item.sequence = index + 1
-  })
-
-  localScheduledSongs.value = newOrder
-  hasChanges.value = true
+  placeSongInSchedule(song, songId, { dropIndex })
 }
 
 // 添加歌曲到排期（点击方式）
-const addSongToSchedule = (song) => {
-  if (!can('schedule:write')) return
-  const existingIndex = localScheduledSongs.value.findIndex((s) => s.song.id === song.id)
-  if (existingIndex !== -1) return
-  if (!canAddToSchedule(song)) return
+const addSongToSchedule = (song) => placeSongInSchedule(song, song.id, { vibration: 50 })
 
-  const newSchedule = {
-    id: Date.now(),
-    replayRequestId: song.replayRequestId || null,
-    song: song,
-    playDate: selectedDate.value,
-    sequence: localScheduledSongs.value.length + 1,
-    isNew: true,
-    isLocalOnly: true
-  }
-
-  scheduledSongIds.value.add(song.id)
-  setSongScheduledFlag(song.id, true)
-  localScheduledSongs.value.push(newSchedule)
-  hasChanges.value = true
-
-  if (navigator.vibrate) navigator.vibrate(50)
+const placeSongInSchedule = (song, songId, { dropIndex, isLocalOnly = dropIndex === undefined, vibration } = {}) => {
+  const canPlace = () => can('schedule:write') && !localScheduledSongs.value.some(item => item.song.id === songId)
+  if (!song || showConfirmDialog.value || !canPlace()) return
+  confirmSchedulePlacement(song, () => {
+    if (!canPlace()) return
+    const schedule = {
+      id: Date.now(),
+      replayRequestId: song.replayRequestId || null,
+      song,
+      playDate: selectedDate.value,
+      sequence: localScheduledSongs.value.length + 1,
+      isNew: true
+    }
+    if (isLocalOnly) schedule.isLocalOnly = true
+    if (dropIndex === undefined) {
+      localScheduledSongs.value.push(schedule)
+    } else {
+      const newOrder = [...localScheduledSongs.value]
+      newOrder.splice(dropIndex, 0, schedule)
+      newOrder.forEach((item, index) => { item.sequence = index + 1 })
+      localScheduledSongs.value = newOrder
+    }
+    scheduledSongIds.value.add(songId)
+    setSongScheduledFlag(songId, true)
+    hasChanges.value = true
+    if (vibration && navigator.vibrate) navigator.vibrate(vibration)
+  })
 }
 
 // 从排期移除歌曲（点击方式）
@@ -5904,6 +5844,7 @@ const saveDraftConfirmed = async () => {
   loading.value = true
   const savedDate = selectedDate.value
   const savedPlayTime = selectedPlayTime.value ? Number(selectedPlayTime.value) : 'all'
+  const allowPlacementOverride = localScheduledSongs.value.some(item => Boolean(getPlayTimeConflict(item.song)))
 
   try {
     await $fetch('/api/admin/schedule/bulk-draft', {
@@ -5911,6 +5852,7 @@ const saveDraftConfirmed = async () => {
       body: {
         playDate: savedDate,
         playTimeId: savedPlayTime === 'all' ? null : savedPlayTime,
+        allowPlacementOverride,
         songs: localScheduledSongs.value.map((item) => ({
           songId: item.song.id,
           replayRequestId: item.replayRequestId || item.song?.replayRequestId || null
@@ -5962,25 +5904,40 @@ const saveDraft = async () => {
   await saveDraftConfirmed()
 }
 
+const readPublishContext = (query) => $fetch('/api/admin/schedule/publish-context', {
+  ...auth.getAuthConfig(),
+  query
+})
+
+const appendBroadcastWarning = (context) => {
+  if (!context.slots.length) return
+  const text = locale.value.confirmations
+  const slots = context.slots.map(slot => `${slot.name} (${slot.startTime}–${slot.endTime})`).join('\n')
+  const account = context.account ? text.unattendedAccount(context.account) : text.unattendedAccountOffline
+  confirmDialogMessage.value += `\n\n${text.autoBroadcastWarning}\n${slots}\n${account}`
+}
+
 // 发布排期（需要确认）
 const publishSchedule = async () => {
-  if (!can('schedule:write')) return
+  if (!can('schedule:write') || loading.value) return
+  const playDate = selectedDate.value
+  const playTimeId = selectedPlayTime.value ? Number(selectedPlayTime.value) : undefined
+  const allowPlacementOverride = localScheduledSongs.value.some(item => Boolean(getPlayTimeConflict(item.song)))
+  const songsToPublish = localScheduledSongs.value.map((item, index) => ({
+    songId: item.song.id,
+    sequence: index + 1,
+    replayRequestId: item.replayRequestId || item.song?.replayRequestId || null
+  }))
+  const warningCount = getUnspecifiedPlayTimeWarningCount()
+  loading.value = true
   try {
-    const warningCount = getUnspecifiedPlayTimeWarningCount()
-    if (localScheduledSongs.value.length > 0 && warningCount > 0) {
+    const context = await readPublishContext({ playDate, playTimeId })
+    if (songsToPublish.length > 0 && warningCount > 0) {
       confirmDialogTitle.value = locale.value.confirmations.unspecifiedPlayTimeTitle
       confirmDialogMessage.value = locale.value.confirmations.unspecifiedPlayTimePublishWarning(warningCount)
-      confirmDialogType.value = 'danger'
+      confirmDialogType.value = 'warning'
       confirmDialogConfirmText.value = locale.value.confirmations.unspecifiedPlayTimePublishConfirm
-      confirmAction.value = async () => {
-        await publishScheduleConfirmed()
-      }
-      showConfirmDialog.value = true
-      return
-    }
-
-    // 如果列表为空，提示删除排期
-    if (localScheduledSongs.value.length === 0) {
+    } else if (songsToPublish.length === 0) {
       confirmDialogTitle.value = locale.value.confirmations.deleteScheduleTitle
       confirmDialogMessage.value = locale.value.confirmations.deleteScheduleMessage
       confirmDialogType.value = 'danger'
@@ -5992,41 +5949,31 @@ const publishSchedule = async () => {
       confirmDialogConfirmText.value = locale.value.publishSchedule
     }
 
-    confirmAction.value = async () => {
-      await publishScheduleConfirmed()
-    }
+    confirmDialogMessage.value += `\n${locale.value.confirmations.publishScope(playDate, playTimeId ? getPlayTimeName(playTimeId) : locale.value.allPlayTimes)}`
+    appendBroadcastWarning(context)
+    confirmAction.value = () => publishScheduleConfirmed({
+      playDate, playTimeId: playTimeId ?? null, allowPlacementOverride, songs: songsToPublish,
+      broadcastConfirmation: context.confirmation
+    })
     showConfirmDialog.value = true
   } catch (error) {
-    console.error('发布排期失败:', error)
+    window.$showNotification?.(localizeServerError(error), 'error')
+  } finally {
+    loading.value = false
   }
 }
 
 // 确认发布排期
-const publishScheduleConfirmed = async () => {
+const publishScheduleConfirmed = async (body) => {
   loading.value = true
-  const savedDate = selectedDate.value
-  const savedPlayTime = selectedPlayTime.value ? Number(selectedPlayTime.value) : 'all'
-
   try {
-    // 构建发布数据，携带拖拽时显式选择的重播申请绑定
-    const songsToPublish = localScheduledSongs.value.map((item, index) => ({
-      songId: item.song.id,
-      sequence: index + 1,
-      replayRequestId: item.replayRequestId || item.song?.replayRequestId || null
-    }))
-
-    // 调用批量发布API
     await $fetch('/api/admin/schedule/bulk-publish', {
       method: 'POST',
-      body: {
-        playDate: savedDate,
-        playTimeId: savedPlayTime === 'all' ? null : savedPlayTime,
-        songs: songsToPublish
-      },
+      body,
       ...auth.getAuthConfig()
     })
 
-    notifySchedulePlaylistChanged({ dates: [savedDate], playTimeId: savedPlayTime })
+    notifySchedulePlaylistChanged({ dates: [body.playDate], playTimeId: body.playTimeId ?? 'all' })
     hasChanges.value = false
     await loadData() // 重新加载数据
 
@@ -6034,7 +5981,7 @@ const publishScheduleConfirmed = async () => {
     updateLocalScheduledSongs()
 
     if (window.$showNotification) {
-      if (songsToPublish.length === 0) {
+      if (body.songs.length === 0) {
         window.$showNotification(locale.value.messages.scheduleDeleted, 'success')
       } else {
         window.$showNotification(locale.value.messages.schedulePublished, 'success')
@@ -6052,8 +5999,10 @@ const publishScheduleConfirmed = async () => {
 
 // 发布单个草稿（需要确认）
 const publishSingleDraft = async (draft) => {
-  if (!can('schedule:write')) return
+  if (!can('schedule:write') || loading.value) return
+  loading.value = true
   try {
+    const context = await readPublishContext({ scheduleId: draft.id })
     confirmDialogTitle.value = locale.value.confirmations.publishDraftTitle
     confirmDialogMessage.value = callLocale(
       'confirmations.publishDraftMessage',
@@ -6062,23 +6011,26 @@ const publishSingleDraft = async (draft) => {
     )
     confirmDialogType.value = 'warning'
     confirmDialogConfirmText.value = locale.value.publish
+    appendBroadcastWarning(context)
     confirmAction.value = async () => {
-      await publishSingleDraftConfirmed(draft)
+      await publishSingleDraftConfirmed(draft, context.confirmation)
     }
     showConfirmDialog.value = true
   } catch (error) {
-    console.error('发布单个草稿失败:', error)
+    window.$showNotification?.(localizeServerError(error), 'error')
+  } finally {
+    loading.value = false
   }
 }
 
 // 确认发布单个草稿
-const publishSingleDraftConfirmed = async (draft) => {
+const publishSingleDraftConfirmed = async (draft, broadcastConfirmation) => {
   loading.value = true
 
   try {
     await $fetch('/api/admin/schedule/publish', {
       method: 'POST',
-      body: { scheduleId: draft.id },
+      body: { scheduleId: draft.id, broadcastConfirmation },
       ...auth.getAuthConfig()
     })
 
@@ -6300,10 +6252,6 @@ const handleTouchEnd = (event) => {
       if (touchDragData.value.type === 'song' && (sequenceList || scheduledSong)) {
         // 从左侧拖拽到右侧
         handleTouchDropToSequence(scheduledSong)
-        // 成功拖拽震动反馈
-        if (navigator.vibrate) {
-          navigator.vibrate([30, 50, 30])
-        }
       } else if (touchDragData.value.type === 'schedule' && scheduledSong) {
         // 在右侧重新排序
         handleTouchReorder(scheduledSong)
@@ -6326,43 +6274,15 @@ const handleTouchEnd = (event) => {
   cleanupTouchDrag()
 }
 
-const handleTouchDropToSequence = async (targetElement) => {
+const handleTouchDropToSequence = (targetElement) => {
   const song = touchDragData.value.item
-  if (!canAddToSchedule(song)) return
-  const existingIndex = localScheduledSongs.value.findIndex((s) => s.song.id === song.id)
-  if (existingIndex !== -1) return
-
-  let insertIndex = localScheduledSongs.value.length
-
-  if (targetElement) {
-    const scheduleId = parseInt(targetElement.dataset.scheduleId)
-    const targetIndex = localScheduledSongs.value.findIndex((s) => s.id === scheduleId)
-    if (targetIndex !== -1) {
-      insertIndex = targetIndex
-    }
-  }
-
-  // 直接添加到本地列表，不发送请求
-  const newSchedule = {
-    id: Date.now(),
-    replayRequestId: song.replayRequestId || null,
-    song: song,
-    playDate: selectedDate.value,
-    sequence: insertIndex + 1,
-    isNew: true,
-    isLocalOnly: true
-  }
-
-  scheduledSongIds.value.add(song.id)
-  setSongScheduledFlag(song.id, true)
-  localScheduledSongs.value.splice(insertIndex, 0, newSchedule)
-
-  // 更新序列号
-  localScheduledSongs.value.forEach((item, idx) => {
-    item.sequence = idx + 1
+  const scheduleId = Number(targetElement?.dataset.scheduleId)
+  const index = localScheduledSongs.value.findIndex(item => item.id === scheduleId)
+  placeSongInSchedule(song, song?.id, {
+    dropIndex: index === -1 ? undefined : index,
+    isLocalOnly: true,
+    vibration: [30, 50, 30]
   })
-
-  hasChanges.value = true
 }
 
 const handleTouchReorder = async (targetElement) => {

@@ -118,6 +118,7 @@
 import {
   LayoutDashboard,
   CalendarDays,
+  Radio,
   Printer,
   Music2,
   BarChart3,
@@ -139,6 +140,7 @@ import {
   ShieldCheck,
   Activity,
   ScrollText,
+  ArrowUpCircle,
   FileText
 } from '@lucide/vue'
 import { useLocale } from '~/utils/locale'
@@ -178,6 +180,7 @@ const menuGroups = computed(() => [
   {
     section: locale.value.sections?.content || '内容管理',
     items: [
+      { icon: Radio, label: locale.value.menu?.playback || '播放控制', id: 'playback' },
       { icon: CalendarDays, label: locale.value.menu?.schedule || '排班管理', id: 'schedule' },
       { icon: Printer, label: locale.value.menu?.print || '打印管理', id: 'print' },
       { icon: Music2, label: locale.value.menu?.songs || '点歌管理', id: 'songs' },
@@ -193,7 +196,7 @@ const menuGroups = computed(() => [
     section: locale.value.sections?.users || '用户管理',
     items: [
       { icon: Users, label: locale.value.menu?.users || '用户管理', id: 'users' },
-      { icon: GraduationCap, label: locale.value.menu?.gradeClass || '年级班级', id: 'grade-class' }
+      { icon: GraduationCap, label: locale.value.menu?.gradeClass || '分类字段', id: 'grade-class' }
     ]
   },
   {
@@ -212,6 +215,7 @@ const menuGroups = computed(() => [
       { icon: Ticket, label: locale.value.menu?.cardCodes || '卡密管理', id: 'card-codes' },
       { icon: ListMusic, label: locale.value.menu?.musicSource || '音源控制', id: 'music-source' },
       { icon: Globe, label: locale.value.menu?.siteConfig || '站点配置', id: 'site-config' },
+      { icon: ArrowUpCircle, label: locale.value.menu?.systemUpdate || '系统升级', id: 'system-update' },
       { icon: Database, label: locale.value.menu?.database || '数据库', id: 'database' },
       { icon: Activity, label: locale.value.menu?.systemBoard || '系统看板', id: 'system-board' },
       { icon: ScrollText, label: locale.value.menu?.auditLog || '日志审计', id: 'audit-log' },

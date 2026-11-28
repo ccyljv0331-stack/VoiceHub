@@ -6,7 +6,7 @@
  * 未登记的后台接口默认拒绝并记录日志。
  * 表与 server/api/admin 下的端点逐一对应，由 tests/server/admin-permission-routes.test.ts 校验等价性。
  */
-import { PRIV_ADMIN_CONSOLE, PRIV_AUDIT, PRIV_LOGS } from '../../app/utils/admin-permissions.ts'
+import { PRIV_ADMIN_CONSOLE, PRIV_AUDIT, PRIV_LOGS, PRIV_SYSTEM_UPDATE } from '../../app/utils/admin-permissions.ts'
 import { ADMIN_SETTINGS_SCOPES } from './admin-settings-scope.ts'
 
 type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -38,9 +38,14 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { p: 'songs', m: WRITE_METHODS, any: ['songs:write'] },
   { p: 'songs/*', m: WRITE_METHODS, any: ['songs:write'] },
   { p: 'schedule', m: GET_METHODS, any: ['schedule:read'] },
+  { p: 'schedule/publish-context', m: GET_METHODS, any: ['schedule:write'] },
   { p: 'schedule/*', m: GET_METHODS, any: ['schedule:read'] },
   { p: 'schedule', m: WRITE_METHODS, any: ['schedule:write'] },
   { p: 'schedule/*', m: WRITE_METHODS, any: ['schedule:write'] },
+  { p: 'playback', m: GET_METHODS, any: ['playback:read'] },
+  { p: 'playback/:id', m: ['PUT'], any: ['playback:configure'] },
+  { p: 'playback/control', m: ['POST'], any: ['playback:control'] },
+  { p: 'playback/remote', m: ['POST'], any: ['playback:remote-disarm', 'playback:emergency-stop'] },
   { p: 'replay-requests', m: GET_METHODS, any: ['replay-requests:read'] },
   { p: 'replay-requests/*', m: WRITE_METHODS, any: ['replay-requests:write'] },
   { p: 'play-times', m: GET_METHODS, any: ['play-times:read'] },
@@ -128,6 +133,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
 
   // 审计日志：仅超级管理员（私有码，不在权限目录中）
   { p: 'audit-logs', m: GET_METHODS, any: [PRIV_AUDIT] },
+  { p: 'system-update', m: [...GET_METHODS, 'POST'], any: [PRIV_SYSTEM_UPDATE] },
   { p: 'audit-logs/*', m: GET_METHODS, any: [PRIV_AUDIT] },
 
   // 日志管理：查询/导出与清理同样仅超级管理员

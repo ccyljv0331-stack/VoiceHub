@@ -14,7 +14,7 @@
       <div class="top-bar">
         <div class="logo-section">
           <NuxtLink class="logo-link" to="/">
-            <img alt="VoiceHub Logo" class="logo-image" :src="getLogo()" />
+            <img :alt="siteTitle || 'VoiceHub'" class="logo-image" :src="logoUrl?.startsWith('data:image/') ? logoUrl : getLogo()" />
           </NuxtLink>
           <!-- 横线和学校logo -->
           <div v-if="schoolLogoHomeDisplayUrl" class="logo-divider-container">
@@ -849,7 +849,7 @@ import ConfirmDialog from '~/components/UI/ConfirmDialog.vue'
 import AppLoadingScreen from '~/components/UI/AppLoadingScreen.vue'
 
 import { useNotifications } from '~/composables/useNotifications'
-import { useSiteConfig, setSiteConfigData } from '~/composables/useSiteConfig'
+import { useSiteConfig } from '~/composables/useSiteConfig'
 import { useToast } from '~/composables/useToast'
 import { renderMarkdown } from '~/utils/markdown'
 import CustomSelect from '~/components/UI/Common/CustomSelect.vue'
@@ -872,7 +872,9 @@ const getMessage = (key, ...args) => getHomeText('messages', key, ...args)
 // 站点配置
 const {
   isLoaded,
+  setSiteConfigData,
   siteTitle,
+  logoUrl,
   description: siteDescription,
   guidelines: submissionGuidelines,
   icp: icpNumber,

@@ -18,10 +18,12 @@ export const PRIV_GRANT = 'priv:grant'
 // 站点级：管理员审计与日志管理，仅供超级管理员。不进入权限目录，无法被显式授出
 export const PRIV_AUDIT = 'priv:audit'
 export const PRIV_LOGS = 'priv:logs'
+export const PRIV_ORGANIZATION_LABEL = 'priv:organization-label'
+export const PRIV_SYSTEM_UPDATE = 'priv:system-update'
 
 // 私有码只在持有全站通配 `*`（即超级管理员模板）时生效；
 // `priv:*` 等域通配不得覆盖，避免把审计能力随通配授权扩散出去。
-export const PRIVATE_PERMISSION_CODES: readonly string[] = [PRIV_AUDIT, PRIV_LOGS]
+export const PRIVATE_PERMISSION_CODES: readonly string[] = [PRIV_AUDIT, PRIV_LOGS, PRIV_ORGANIZATION_LABEL, PRIV_SYSTEM_UPDATE]
 const PRIVATE_PERMISSION_CODE_SET: ReadonlySet<string> = new Set(PRIVATE_PERMISSION_CODES)
 
 // 安全阀保护的站点级能力：移出其最后一个持有者会把站点锁死在无人可再授权的状态
@@ -55,6 +57,12 @@ export const ADMIN_PERMISSION_CODES: readonly string[] = [
   'songs:bypass-limits',
   'schedule:read',
   'schedule:write',
+  'playback:read',
+  'playback:control',
+  'playback:configure',
+  'playback:mark-played',
+  'playback:remote-disarm',
+  'playback:emergency-stop',
   'stats:read',
   'play-times:read',
   'play-times:write',
@@ -118,6 +126,7 @@ export const ADMIN_PERMISSION_CODES: readonly string[] = [
   'music-source-plugins:write',
   // 页面码可单独显示入口；显式拒绝页面码可隐藏业务能力派生的入口。
   'page:overview',
+  'page:playback',
   'page:schedule',
   'page:print',
   'page:songs',
@@ -199,6 +208,9 @@ export const ROLE_PERMISSION_TEMPLATES_DEFAULT: Record<string, readonly string[]
     'system:read',
     'schedule:read',
     'schedule:write',
+    'playback:control',
+    'playback:configure',
+    'playback:mark-played',
     'stats:read',
     'play-times:read',
     'play-times:write',
@@ -263,6 +275,7 @@ export const ROLE_PERMISSION_TEMPLATES_DEFAULT: Record<string, readonly string[]
 // 后台页面 ID（侧边栏与 dashboard tab 共用），页面码统一为 `page:<id>`
 export const ADMIN_PAGE_IDS: readonly string[] = [
   'overview',
+  'playback',
   'schedule',
   'print',
   'songs',
@@ -279,6 +292,7 @@ export const ADMIN_PAGE_IDS: readonly string[] = [
   'card-codes',
   'music-source',
   'site-config',
+  'system-update',
   'database',
   'system-board',
   'permissions',
@@ -295,6 +309,7 @@ export const PAGE_PERMISSIONS: Record<string, readonly string[]> = Object.fromEn
 export const PERMISSION_READ_DEPENDENCIES: Record<string, readonly string[]> = {
   'songs:read': ['songs:write', 'songs:review', 'songs:delete', 'schedule:read', 'schedule:write'],
   'schedule:read': ['schedule:write'],
+  'playback:read': ['playback:control', 'playback:configure', 'playback:mark-played', 'playback:remote-disarm', 'playback:emergency-stop'],
   'play-times:read': ['play-times:write'],
   'request-times:read': ['request-times:write'],
   'semesters:read': ['semesters:write', 'semesters:delete'],
@@ -318,6 +333,7 @@ export const PERMISSION_READ_DEPENDENCIES: Record<string, readonly string[]> = {
 
 export const ADMIN_PAGE_CAPABILITIES: Record<string, readonly string[]> = {
   overview: ['stats:read', 'activities:read', 'system:read'],
+  playback: ['playback:read'],
   schedule: ['schedule:read', 'replay-requests:read'],
   print: ['schedule:read'],
   songs: ['songs:read'],
@@ -334,6 +350,7 @@ export const ADMIN_PAGE_CAPABILITIES: Record<string, readonly string[]> = {
   'card-codes': ['card-codes:read'],
   'music-source': ['music-source:read', 'music-source-plugins:read', 'system-settings:read'],
   'site-config': ['system-settings:read'],
+  'system-update': [PRIV_SYSTEM_UPDATE],
   database: ['database:read', 'backup:read', 'backup:restore'],
   'system-board': ['system-board:read'],
   permissions: [PRIV_ROLE_TEMPLATE],

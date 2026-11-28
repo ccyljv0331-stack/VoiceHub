@@ -1,5 +1,6 @@
 import { normalizeSubmittedTemplates } from '~~/server/utils/permission-admin'
-import { normalizePermissionTokens } from '~~/app/utils/admin-permissions'
+import { hasAdminPermission, normalizePermissionTokens, PRIV_ORGANIZATION_LABEL } from '~~/app/utils/admin-permissions'
+import { ORGANIZATION_LABEL_FIELDS, parseOrganizationLabel } from '~/utils/organization-labels'
 import { defineEventHandler, readBody } from 'h3'
 import { db } from '~/drizzle/db'
 import { restorePluginRecord } from '~~/server/utils/music-source-plugins/backup'
@@ -35,6 +36,7 @@ import { omitMaskedSystemSettingsSecrets } from '~~/server/api/admin/system-sett
 import { restoreAstrbotBindings } from '~~/server/utils/astrbot-backup'
 import { createApiError } from '~~/server/utils/apiError'
 import { clearDefaultPlayTime } from '~~/server/utils/play-time-default'
+import { readBroadcastPolicyBackup } from '~~/server/utils/play-slot'
 import { validateThemeConfig } from '~~/server/utils/theme-config'
 import { SERVER_ERROR_CODES } from '~~/server/config/constants'
 import { normalizeScheduleVisibilitySettings } from '~~/server/utils/system-settings-defaults'
@@ -676,7 +678,7 @@ export default defineEventHandler(async (event) => {
           }
 
           case 'playTimes': {
-            const playTimeData: any = {}
+            const playTimeData: any = readBroadcastPolicyBackup(record)
             const playTimeFields = ['name', 'startTime', 'endTime', 'description', 'weekdays']
             playTimeFields.forEach((field) => {
               if (record.hasOwnProperty(field)) {
@@ -864,6 +866,16 @@ export default defineEventHandler(async (event) => {
           }
 
           case 'systemSettings': {
+            if (hasAdminPermission(user, PRIV_ORGANIZATION_LABEL)) {
+              for (const field of ORGANIZATION_LABEL_FIELDS) {
+                if (!Object.hasOwn(record, field)) continue
+                const label = parseOrganizationLabel(record[field])
+                if (label !== null) record[field] = label
+                else delete record[field]
+              }
+            } else {
+              for (const field of ORGANIZATION_LABEL_FIELDS) delete record[field]
+            }
             let systemSettingsData: any = {}
             const fields = [
               'enablePlayTimeSelection',
@@ -873,6 +885,7 @@ export default defineEventHandler(async (event) => {
               'enabledThemes',
               'telemetryEnabled',
               'siteTitle',
+              ...ORGANIZATION_LABEL_FIELDS,
               'siteLogoUrl',
               'schoolLogoHomeUrl',
               'schoolLogoPrintUrl',
